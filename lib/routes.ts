@@ -3,7 +3,15 @@
 // и в middleware.ts (Edge Runtime), и в серверных layout'ах.
 
 // Все пути внутри защищённой группы app/(main) — доступны только с сессией.
-export const PROTECTED_PREFIXES = ['/map', '/data', '/analytics', '/export', '/admin'] as const;
+export const PROTECTED_PREFIXES = [
+  '/map',
+  '/data',
+  '/analytics',
+  '/export',
+  '/admin',
+  '/boreholes',
+  '/observation-points',
+] as const;
 
 // Страницы аутентификации — залогиненного пользователя с них нужно увести.
 export const AUTH_PATHS = ['/login', '/register'] as const;

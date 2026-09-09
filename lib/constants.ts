@@ -23,6 +23,34 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   student: 'Студент',
 };
 
+// Русские метки для enum'ов, приходящих из БД. Значения обязаны совпадать с
+// CHECK-констрейнтами в миграции 001, метки — для UI.
+export const SOIL_TYPE_LABELS = {
+  clay: 'Глина',
+  loam: 'Суглинок',
+  sand: 'Песок',
+  gravel: 'Гравий',
+  peat: 'Торф',
+  rock: 'Скальный грунт',
+  other: 'Другое',
+} as const;
+
+export const POINT_TYPE_LABELS = {
+  geological: 'Геологическая',
+  hydrological: 'Гидрологическая',
+  geomorphological: 'Геоморфологическая',
+  geocryological: 'Геокриологическая',
+  vegetation: 'Растительность',
+  other: 'Другое',
+} as const;
+
+export const PERMAFROST_LABELS = {
+  frozen: 'Мёрзлый',
+  thawed: 'Талый',
+  transitional: 'Переходный',
+  unknown: 'Нет данных',
+} as const;
+
 export interface NavItem {
   href: string;
   label: string;

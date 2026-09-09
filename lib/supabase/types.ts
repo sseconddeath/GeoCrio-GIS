@@ -1,15 +1,17 @@
-// Ручные TypeScript-типы под схему БД из supabase/migrations/001_initial_schema.sql
-// и 002_storage_setup.sql (Этап 0).
+// Ручные TypeScript-типы под схему БД из supabase/migrations/001_initial_schema.sql,
+// 002_storage_setup.sql и 003_seed_polygon.sql (Этап 0/2).
 //
 // Синхронизировать вручную с каждой новой миграцией. При появлении реального
 // Supabase-проекта сверить через `supabase gen types typescript --project-id <id>`
 // — особое внимание на geometry-колонки (`location`, `boundary`, `bounds`):
-// PostgREST может отдавать их как GeoJSON или как WKB/hex в зависимости от
-// версии/конфигурации, поэтому здесь они помечены `unknown` — распарсить
-// решит Этап 2, когда появится реальный ответ API для сверки.
+// PostgREST по умолчанию отдаёт их как EWKB hex-строку, но с модификатором
+// `.geojson()` из @supabase/postgrest-js — как готовый GeoJSON.
 //
-// Для Этапа 1 реально используется только `profiles`; остальные таблицы —
-// контракт на будущие этапы.
+// В Этапе 2 карта читает объекты через view `map_objects` с `.geojson()`,
+// поэтому здесь geometry-колонки типизированы как соответствующие
+// GeoJSON.* типы (namespace GeoJSON транзитивно приходит от @types/geojson,
+// подтягиваемого maplibre-gl). Если конкретный запрос читает без
+// `.geojson()`, сверху удобно скастовать к `string` (EWKB hex).
 
 export type UserRole = 'admin' | 'researcher' | 'student';
 export type SoilType = 'clay' | 'loam' | 'sand' | 'gravel' | 'peat' | 'rock' | 'other';
@@ -26,9 +28,13 @@ export type ConflictResolution = 'auto_latest' | 'auto_code_rename' | 'manual' |
 export type AuditAction = 'insert' | 'update' | 'delete' | 'restore' | 'sync';
 export type PermafrostStatus = 'unknown' | 'frozen' | 'thawed' | 'transitional';
 
-type Geometry = unknown;
+// Пришло из @supabase/postgrest-js через `.geojson()` — реальный JS-объект.
+// Без `.geojson()` PostgREST отдаёт EWKB hex-строку; в таких запросах
+// удобно кастовать поле к string на месте.
+type PointGeom = GeoJSON.Point;
+type PolygonGeom = GeoJSON.Polygon;
 
-export interface ProfileRow {
+export type ProfileRow = {
   id: string;
   full_name: string;
   role: UserRole;
@@ -36,7 +42,7 @@ export interface ProfileRow {
   created_at: string;
 }
 
-export interface DeviceRow {
+export type DeviceRow = {
   id: string;
   user_id: string;
   device_name: string | null;
@@ -46,11 +52,11 @@ export interface DeviceRow {
   created_at: string;
 }
 
-export interface PolygonRow {
+export type PolygonRow = {
   id: string;
   name: string;
   description: string | null;
-  boundary: Geometry;
+  boundary: PolygonGeom;
   center_lat: number;
   center_lng: number;
   default_zoom: number;
@@ -59,12 +65,12 @@ export interface PolygonRow {
   updated_at: string;
 }
 
-export interface BoreholeRow {
+export type BoreholeRow = {
   id: string;
   polygon_id: string;
   code: string;
   draft_code: string | null;
-  location: Geometry;
+  location: PointGeom;
   depth_m: number | null;
   soil_type: SoilType | null;
   description: string | null;
@@ -75,7 +81,7 @@ export interface BoreholeRow {
   updated_at: string;
 }
 
-export interface MeasurementRow {
+export type MeasurementRow = {
   id: string;
   borehole_id: string;
   depth_m: number;
@@ -88,12 +94,12 @@ export interface MeasurementRow {
   created_at: string;
 }
 
-export interface ObservationPointRow {
+export type ObservationPointRow = {
   id: string;
   polygon_id: string;
   code: string;
   draft_code: string | null;
-  location: Geometry;
+  location: PointGeom;
   point_type: PointType;
   description: string | null;
   is_deleted: boolean;
@@ -103,14 +109,14 @@ export interface ObservationPointRow {
   updated_at: string;
 }
 
-export interface PhotoRow {
+export type PhotoRow = {
   id: string;
   borehole_id: string | null;
   observation_point_id: string | null;
   polygon_id: string | null;
   storage_path: string;
   thumbnail_path: string | null;
-  location: Geometry | null;
+  location: PointGeom | null;
   taken_at: string | null;
   caption: string | null;
   file_size_kb: number | null;
@@ -122,14 +128,14 @@ export interface PhotoRow {
   created_at: string;
 }
 
-export interface LayerRow {
+export type LayerRow = {
   id: string;
   polygon_id: string;
   name: string;
   layer_type: LayerType;
   source_format: SourceFormat | null;
   storage_path: string;
-  bounds: Geometry | null;
+  bounds: PolygonGeom | null;
   min_zoom: number;
   max_zoom: number;
   opacity: number;
@@ -142,10 +148,10 @@ export interface LayerRow {
   created_at: string;
 }
 
-export interface FieldNoteRow {
+export type FieldNoteRow = {
   id: string;
   polygon_id: string;
-  location: Geometry | null;
+  location: PointGeom | null;
   title: string | null;
   content: string;
   is_deleted: boolean;
@@ -154,7 +160,7 @@ export interface FieldNoteRow {
   created_at: string;
 }
 
-export interface SyncConflictRow {
+export type SyncConflictRow = {
   id: string;
   table_name: string;
   record_id: string;
@@ -170,7 +176,7 @@ export interface SyncConflictRow {
   resolved_at: string | null;
 }
 
-export interface AuditLogRow {
+export type AuditLogRow = {
   id: string;
   user_id: string | null;
   device_id: string | null;
@@ -182,11 +188,11 @@ export interface AuditLogRow {
   created_at: string;
 }
 
-export interface MapObjectRow {
+export type MapObjectRow = {
   id: string;
   name: string;
   type: string;
-  location: Geometry;
+  location: PointGeom;
   polygon_id: string;
   depth_m: number | null;
   soil_type: SoilType | null;
@@ -196,7 +202,7 @@ export interface MapObjectRow {
   photo_count: number;
 }
 
-export interface PolygonStatsRow {
+export type PolygonStatsRow = {
   polygon_id: string;
   name: string;
   borehole_count: number;
@@ -205,7 +211,7 @@ export interface PolygonStatsRow {
   measurement_count: number;
 }
 
-export interface BoreholeTemperatureProfileRow {
+export type BoreholeTemperatureProfileRow = {
   borehole_id: string;
   borehole_code: string;
   depth_m: number;
@@ -213,13 +219,38 @@ export interface BoreholeTemperatureProfileRow {
   measured_at: string;
 }
 
+// Форма ожидаемая @supabase/postgrest-js — обязательно поле Relationships
+// (см. GenericTable/GenericView в postgrest-js/src/types/common/common.ts).
+// FK-связи мы вручную не описываем, пустой массив подходит.
 interface TableDef<Row, Insert, Update> {
   Row: Row;
   Insert: Insert;
   Update: Update;
+  Relationships: [];
+}
+
+interface ViewDef<Row> {
+  Row: Row;
+  Relationships: [];
 }
 
 type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+// При записи geometry PostgREST принимает EWKT-строку "SRID=4326;POINT(x y)"
+// и приводит её к geometry неявно. На чтении geometry приходит как GeoJSON
+// (при использовании .geojson()) или EWKB hex, но на записи типизируем
+// поле как `PointGeom | string`, чтобы Server Action мог передать EWKT.
+// Distributive-условие вида `PointGeom extends T[K]` работает и для
+// опциональных полей (T[K] = PointGeom | undefined) и для nullable
+// (T[K] = PointGeom | null) — если исходный тип содержит PointGeom/PolygonGeom,
+// добавляем к нему `string` как альтернативу.
+type WithGeometryWrite<T> = {
+  [K in keyof T]: PointGeom extends T[K]
+    ? T[K] | string
+    : PolygonGeom extends T[K]
+      ? T[K] | string
+      : T[K];
+};
 
 export interface Database {
   public: {
@@ -236,19 +267,19 @@ export interface Database {
       >;
       polygons: TableDef<
         PolygonRow,
-        Optional<
+        WithGeometryWrite<Optional<
           PolygonRow,
           'id' | 'description' | 'center_lat' | 'center_lng' | 'default_zoom' | 'created_by' | 'created_at' | 'updated_at'
-        >,
-        Partial<Omit<PolygonRow, 'id' | 'center_lat' | 'center_lng'>>
+        >>,
+        WithGeometryWrite<Partial<Omit<PolygonRow, 'id' | 'center_lat' | 'center_lng'>>>
       >;
       boreholes: TableDef<
         BoreholeRow,
-        Optional<
+        WithGeometryWrite<Optional<
           BoreholeRow,
           'id' | 'draft_code' | 'depth_m' | 'soil_type' | 'description' | 'is_deleted' | 'created_by' | 'device_id' | 'created_at' | 'updated_at'
-        >,
-        Partial<Omit<BoreholeRow, 'id'>>
+        >>,
+        WithGeometryWrite<Partial<Omit<BoreholeRow, 'id'>>>
       >;
       measurements: TableDef<
         MeasurementRow,
@@ -257,15 +288,15 @@ export interface Database {
       >;
       observation_points: TableDef<
         ObservationPointRow,
-        Optional<
+        WithGeometryWrite<Optional<
           ObservationPointRow,
           'id' | 'draft_code' | 'description' | 'is_deleted' | 'created_by' | 'device_id' | 'created_at' | 'updated_at'
-        >,
-        Partial<Omit<ObservationPointRow, 'id'>>
+        >>,
+        WithGeometryWrite<Partial<Omit<ObservationPointRow, 'id'>>>
       >;
       photos: TableDef<
         PhotoRow,
-        Optional<
+        WithGeometryWrite<Optional<
           PhotoRow,
           | 'id'
           | 'borehole_id'
@@ -282,12 +313,12 @@ export interface Database {
           | 'uploaded_by'
           | 'device_id'
           | 'created_at'
-        >,
-        Partial<Omit<PhotoRow, 'id'>>
+        >>,
+        WithGeometryWrite<Partial<Omit<PhotoRow, 'id'>>>
       >;
       layers: TableDef<
         LayerRow,
-        Optional<
+        WithGeometryWrite<Optional<
           LayerRow,
           | 'id'
           | 'source_format'
@@ -302,13 +333,13 @@ export interface Database {
           | 'is_deleted'
           | 'uploaded_by'
           | 'created_at'
-        >,
-        Partial<Omit<LayerRow, 'id'>>
+        >>,
+        WithGeometryWrite<Partial<Omit<LayerRow, 'id'>>>
       >;
       field_notes: TableDef<
         FieldNoteRow,
-        Optional<FieldNoteRow, 'id' | 'location' | 'title' | 'is_deleted' | 'created_by' | 'device_id' | 'created_at'>,
-        Partial<Omit<FieldNoteRow, 'id'>>
+        WithGeometryWrite<Optional<FieldNoteRow, 'id' | 'location' | 'title' | 'is_deleted' | 'created_by' | 'device_id' | 'created_at'>>,
+        WithGeometryWrite<Partial<Omit<FieldNoteRow, 'id'>>>
       >;
       sync_conflicts: TableDef<
         SyncConflictRow,
@@ -334,9 +365,14 @@ export interface Database {
       >;
     };
     Views: {
-      map_objects: { Row: MapObjectRow };
-      polygon_stats: { Row: PolygonStatsRow };
-      borehole_temperature_profile: { Row: BoreholeTemperatureProfileRow };
+      map_objects: ViewDef<MapObjectRow>;
+      polygon_stats: ViewDef<PolygonStatsRow>;
+      borehole_temperature_profile: ViewDef<BoreholeTemperatureProfileRow>;
     };
+    Functions: Record<string, never>;
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    CompositeTypes: {};
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    Enums: {};
   };
 }
