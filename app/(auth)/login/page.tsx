@@ -19,6 +19,11 @@ export default async function LoginPage({
           Зарегистрироваться
         </Link>
       </p>
+      <p className="mt-3 text-center text-xs text-gray-500">
+        <Link href="/install" className="hover:underline">
+          Установить приложение на телефон или компьютер →
+        </Link>
+      </p>
     </div>
   );
 }

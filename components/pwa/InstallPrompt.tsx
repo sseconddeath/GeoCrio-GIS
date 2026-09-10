@@ -90,7 +90,7 @@ export function InstallPrompt() {
               уже загруженной картой без интернета.
             </p>
           )}
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             {mode === 'android' && deferred ? (
               <button
                 type="button"
@@ -100,6 +100,12 @@ export function InstallPrompt() {
                 Установить
               </button>
             ) : null}
+            <a
+              href="/install"
+              className="inline-flex min-h-[36px] items-center justify-center rounded-md border border-header/40 bg-white px-3 text-xs font-medium text-header hover:bg-header/5"
+            >
+              Подробнее
+            </a>
             <button
               type="button"
               onClick={dismiss}
