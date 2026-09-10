@@ -44,6 +44,7 @@ supabase/migrations/007_security_hardening.sql
 supabase/migrations/008_photos_realtime.sql
 supabase/migrations/009_push_subscriptions.sql
 supabase/migrations/010_view_security_invoker.sql
+supabase/migrations/011_spatial_ref_sys_rls.sql
 ```
 
 **Миграцию 003 пропускаем** — она создавала seed-полигон для разработки,
