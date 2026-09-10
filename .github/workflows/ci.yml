@@ -1,0 +1,57 @@
+name: CI
+
+# Прогоняем полный набор проверок на каждый PR и на пуш в main-ветку
+# (или конкретно в текущую dev-ветку). Быстро (~2 мин) — Next 16 +
+# Turbopack собирается фикс-эйдж быстро, тестов пока немного.
+#
+# Никакие секреты не нужны: тесты не бьют в живой Supabase, build
+# отрабатывает от env-заглушек. Живой e2e будет отдельным workflow
+# после первого деплоя (тогда появятся боевые env NEXT_PUBLIC_SUPABASE_*).
+
+on:
+  pull_request:
+    branches: ['**']
+  push:
+    branches: [main]
+
+concurrency:
+  # На один PR держим одну активную сборку — новый пуш отменяет старую.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint + typecheck + tests + build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        # Build требует NEXT_PUBLIC_SUPABASE_* — на CI они нужны только
+        # чтобы Next не упал при сборке серверных модулей, реальные
+        # значения не требуются. Ставим заведомо невалидные — если код
+        # случайно попытается сделать fetch в build-time, тест провалится.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: 'https://ci.invalid.local'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'ci-anon-key-placeholder'
+        run: npm run build
