@@ -11,21 +11,30 @@ interface PolygonSwitcherProps {
   publicPolygons: Pick<PolygonRow, 'id' | 'name'>[];
 }
 
-// Dropdown в шапке. При клике на пункт — навигация на текущую страницу с
-// ?polygon=<id>. Работает на /map и /data — на других разделах селектор
-// просто ведёт на /map?polygon=<id>. Активный полигон определяется
-// самостоятельно по ?polygon=<id> — layout не может передать его пропом
-// (в Next 16 layout не имеет доступа к searchParams).
+// Dropdown в шапке. При клике на пункт — навигация с сохранением
+// контекста текущей страницы: /map, /data, /analytics и /export
+// принимают ?polygon=<id> и остаются на месте; со страниц /polygons/*
+// и всего остального переключение уводит на /map (там участок = «где
+// я сейчас работаю»).
+//
+// Активный полигон определяется по ?polygon=<id> из URL. При его
+// отсутствии на /polygons/[id]/* — берём id из pathname. layout не
+// может передать это пропом (в Next 16 layout не имеет доступа к
+// searchParams).
 export function PolygonSwitcher({
   myPolygons,
   sharedPolygons,
   publicPolygons,
 }: PolygonSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const activePolygonId = searchParams.get('polygon') ?? undefined;
+  // Активный полигон: сначала ?polygon=<id>, потом — сегмент пути
+  // /polygons/<id>/... (для страниц отдельного участка).
+  const polygonInPath = /^\/polygons\/([0-9a-f-]{36})/.exec(pathname)?.[1];
+  const activePolygonId = searchParams.get('polygon') ?? polygonInPath ?? undefined;
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -46,12 +55,30 @@ export function PolygonSwitcher({
     null;
 
   const switchTo = (polygonId: string) => {
-    const targetPath = pathname === '/data' || pathname === '/map' ? pathname : '/map';
+    // Страницы, где ?polygon=<id> имеет смысл — остаёмся на месте.
+    // /polygons/<id>/... — переключаемся на карту нового участка
+    // (сама страница участка про конкретный id, там смена участка
+    // = уход на другой участок).
+    const POLYGON_AWARE = new Set(['/map', '/data', '/analytics', '/export']);
+    const targetPath = POLYGON_AWARE.has(pathname) ? pathname : '/map';
     const params = new URLSearchParams(searchParams.toString());
     params.set('polygon', polygonId);
     router.push(`${targetPath}?${params.toString()}`);
     setOpen(false);
+    setQuery('');
   };
+
+  // Простой clientside-фильтр по началу/содержанию названия.
+  // Оживает только когда суммарно ≥8 участков — на маленьких списках
+  // строка поиска только мешает.
+  const totalCount =
+    myPolygons.length + sharedPolygons.length + publicPolygons.length;
+  const needle = query.trim().toLowerCase();
+  const filter = <T extends { name: string }>(rows: T[]) =>
+    needle === '' ? rows : rows.filter((r) => r.name.toLowerCase().includes(needle));
+  const filteredMy = filter(myPolygons);
+  const filteredShared = filter(sharedPolygons);
+  const filteredPublic = filter(publicPolygons);
 
   const hasAnything = myPolygons.length + sharedPolygons.length + publicPolygons.length > 0;
 
@@ -78,28 +105,41 @@ export function PolygonSwitcher({
             + Новый участок
           </Link>
 
-          {myPolygons.length > 0 ? (
+          {totalCount >= 8 ? (
+            <div className="border-b border-gray-100 p-2">
+              <input
+                type="text"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Поиск по названию…"
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-header/50"
+              />
+            </div>
+          ) : null}
+
+          {filteredMy.length > 0 ? (
             <PolygonGroup
               title="Мои участки"
-              polygons={myPolygons}
+              polygons={filteredMy}
               activeId={activePolygonId}
               onPick={switchTo}
             />
           ) : null}
 
-          {sharedPolygons.length > 0 ? (
+          {filteredShared.length > 0 ? (
             <PolygonGroup
               title="Приглашения в команды"
-              polygons={sharedPolygons}
+              polygons={filteredShared}
               activeId={activePolygonId}
               onPick={switchTo}
             />
           ) : null}
 
-          {publicPolygons.length > 0 ? (
+          {filteredPublic.length > 0 ? (
             <PolygonGroup
               title="Публичные участки"
-              polygons={publicPolygons.map((p) => ({ ...p, is_public: true }))}
+              polygons={filteredPublic.map((p) => ({ ...p, is_public: true }))}
               activeId={activePolygonId}
               onPick={switchTo}
             />
@@ -109,6 +149,11 @@ export function PolygonSwitcher({
             <p className="px-4 py-6 text-center text-sm text-gray-500">
               У вас пока нет участков. Создайте первый или подождите
               приглашения от коллег.
+            </p>
+          ) : hasAnything &&
+            filteredMy.length + filteredShared.length + filteredPublic.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-gray-500">
+              По запросу «{query}» ничего не найдено.
             </p>
           ) : null}
         </div>

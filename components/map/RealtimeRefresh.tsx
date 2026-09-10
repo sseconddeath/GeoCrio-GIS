@@ -8,13 +8,18 @@ interface RealtimeRefreshProps {
   polygonId: string;
 }
 
-// Подписка на изменения в boreholes и observation_points ЛЮБОГО полигона
-// (Supabase Realtime не умеет фильтровать по колонке в бесплатном тарифе
-// per row — фильтруем на клиенте по polygon_id из payload). При изменении
-// вызывает router.refresh() — Next перерендерит серверный компонент и
-// подтянет свежие объекты через getMapObjectsGeoJSON.
+// Подписка на изменения основных сущностей активного полигона.
+// boreholes и observation_points имеют колонку polygon_id — фильтруем
+// прямо в подписке. measurements и photos связаны через borehole_id /
+// observation_point_id и не имеют polygon_id (кроме случая фото
+// «на полигон» — но это редкий кейс) — подписываемся без фильтра,
+// Supabase Realtime применит RLS и отсеет всё, что клиент не видит.
+// Троттлинг 1 сек защищает от спама (5 замеров подряд из offline-sync).
 //
-// Компонент невидимый, монтируется в MapWorkspace для активного участка.
+// Зачем и measurements: они меняют вычисляемое поле permafrost_status
+// в map_objects view — то есть цвет маркера на карте. Без подписки
+// команда участка не увидит, что коллега завёл замер, до ручного
+// F5. То же с photos для счётчика в статистике.
 export function RealtimeRefresh({ polygonId }: RealtimeRefreshProps) {
   const router = useRouter();
   const lastRefreshRef = useRef(0);
@@ -38,11 +43,18 @@ export function RealtimeRefresh({ polygonId }: RealtimeRefreshProps) {
         },
         () => scheduleRefresh(),
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'measurements' },
+        () => scheduleRefresh(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'photos' },
+        () => scheduleRefresh(),
+      )
       .subscribe();
 
-    // Троттлинг: не бомбардируем сервер refresh'ами, если пришёл всплеск
-    // событий (например 5 замеров подряд из мобильного офлайн-sync). Один
-    // refresh не чаще раза в секунду.
     function scheduleRefresh() {
       const now = Date.now();
       const since = now - lastRefreshRef.current;

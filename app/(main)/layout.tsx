@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { Header } from '@/components/layout/Header';
 import { MobileNav } from '@/components/layout/MobileNav';
 import { getCurrentProfile } from '@/lib/supabase/profile';
+import { countMyIncomingPendingProposals } from '@/lib/supabase/queries';
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
   const profile = await getCurrentProfile();
@@ -13,11 +14,16 @@ export default async function MainLayout({ children }: { children: React.ReactNo
     redirect('/login');
   }
 
+  // Считаем один раз на layout — Header и MobileNav получают одно и
+  // то же число. Дорогой запрос? Нет — два id-only select'а и два
+  // head-count'а.
+  const inboxCount = await countMyIncomingPendingProposals();
+
   return (
     <div className="flex min-h-screen flex-col">
-      <Header fullName={profile.full_name} role={profile.role} />
+      <Header fullName={profile.full_name} role={profile.role} inboxCount={inboxCount} />
       <main className="flex-1 overflow-auto pb-16 md:pb-0">{children}</main>
-      <MobileNav />
+      <MobileNav inboxCount={inboxCount} />
     </div>
   );
 }

@@ -146,6 +146,14 @@ export function ProposalCard({ proposal, currentUserId, showTargetLink }: Propos
         ))}
       </dl>
 
+      {proposal.status !== 'pending' ? (
+        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-3">
+          <StatusBadge status={proposal.status} />
+          {proposal.decision_note ? (
+            <p className="text-xs text-gray-600">Комментарий: «{proposal.decision_note}»</p>
+          ) : null}
+        </div>
+      ) : (
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-gray-600">
           Голосов: <strong>{proposal.votes_count}</strong> / {THRESHOLD}
@@ -199,6 +207,7 @@ export function ProposalCard({ proposal, currentUserId, showTargetLink }: Propos
           ) : null}
         </div>
       </div>
+      )}
 
       <ConfirmDialog
         open={rejectOpen}
@@ -220,4 +229,24 @@ function fieldLabel(table: 'boreholes' | 'observation_points', key: string): str
     return { ...common, depth_m: 'Глубина, м', soil_type: 'Тип грунта' }[key] ?? key;
   }
   return { ...common, point_type: 'Тип точки' }[key] ?? key;
+}
+
+function StatusBadge({ status }: { status: EditProposalWithMeta['status'] }) {
+  const config =
+    status === 'applied'
+      ? { label: 'применено сообществом', bg: 'bg-green-50', fg: 'text-green-800' }
+      : status === 'accepted'
+        ? { label: 'принято автором', bg: 'bg-green-50', fg: 'text-green-800' }
+        : status === 'rejected'
+          ? { label: 'отклонено', bg: 'bg-red-50', fg: 'text-red-800' }
+          : status === 'withdrawn'
+            ? { label: 'отозвано автором', bg: 'bg-gray-100', fg: 'text-gray-700' }
+            : { label: status, bg: 'bg-gray-100', fg: 'text-gray-700' };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${config.bg} ${config.fg}`}
+    >
+      {config.label}
+    </span>
+  );
 }

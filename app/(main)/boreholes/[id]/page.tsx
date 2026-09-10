@@ -15,6 +15,7 @@ import {
   getBoreholeFeature,
   getBoreholeTemperatureProfile,
   getProfileById,
+  listDecidedProposalsForObject,
   listMeasurementsForBorehole,
   listObjectHistory,
   listPendingProposalsForObject,
@@ -42,15 +43,17 @@ export default async function BoreholePage({
   const currentUserId = user?.id ?? null;
   const isAuthor = currentUserId !== null && b.created_by === currentUserId;
 
-  const [author, canEdit, photos, measurements, profile, history, proposals] = await Promise.all([
-    getProfileById(b.created_by),
-    canWritePolygon(b.polygon_id),
-    listPhotosForParent({ kind: 'borehole', id }),
-    listMeasurementsForBorehole(id),
-    getBoreholeTemperatureProfile(id),
-    listObjectHistory('boreholes', id),
-    listPendingProposalsForObject('boreholes', id),
-  ]);
+  const [author, canEdit, photos, measurements, profile, history, proposals, decidedProposals] =
+    await Promise.all([
+      getProfileById(b.created_by),
+      canWritePolygon(b.polygon_id),
+      listPhotosForParent({ kind: 'borehole', id }),
+      listMeasurementsForBorehole(id),
+      getBoreholeTemperatureProfile(id),
+      listObjectHistory('boreholes', id),
+      listPendingProposalsForObject('boreholes', id),
+      listDecidedProposalsForObject('boreholes', id),
+    ]);
 
   const lastMeasurement = measurements[0] ?? null;
   const status = permafrostStatus(lastMeasurement?.temperature_c ?? null);
@@ -177,6 +180,16 @@ export default async function BoreholePage({
               : 'Открытых предложений нет. Заметили опечатку — «Предложить правку» справа.'
           }
         />
+        {decidedProposals.length > 0 ? (
+          <details className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm">
+            <summary className="cursor-pointer text-xs font-medium text-gray-600">
+              Уже решённые ({decidedProposals.length})
+            </summary>
+            <div className="mt-3 space-y-3">
+              <ProposalList proposals={decidedProposals} currentUserId={currentUserId} />
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <section className="mt-6 space-y-3">

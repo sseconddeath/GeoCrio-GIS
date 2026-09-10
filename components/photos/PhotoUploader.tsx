@@ -1,7 +1,7 @@
 'use client';
 
 import { useOffline } from 'next/offline';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { drain, enqueue } from '@/lib/offline/queue';
 import { extractExifGps, resizeImage } from '@/lib/photo';
 import { uploadPhotoAction } from '@/app/(main)/photos/actions';
@@ -19,7 +19,22 @@ export function PhotoUploader({ parent }: PhotoUploaderProps) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [savedOffline, setSavedOffline] = useState(false);
+  const [hasCamera, setHasCamera] = useState(false);
   const isOffline = useOffline();
+
+  // «Снять на камеру» через <input capture> реально работает только на
+  // мобилках с сенсорным экраном (Android/iOS). На десктопе тот же
+  // атрибут просто открывает file picker — обещать съёмку в тексте
+  // неправдиво. Определяем по media query pointer:coarse (сенсорный
+  // основной ввод) — точнее, чем UA-sniff.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const m = window.matchMedia('(pointer: coarse)');
+    const update = () => setHasCamera(m.matches);
+    update();
+    m.addEventListener('change', update);
+    return () => m.removeEventListener('change', update);
+  }, []);
 
   const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -85,7 +100,9 @@ export function PhotoUploader({ parent }: PhotoUploaderProps) {
             : 'Загружаю…'
           : isOffline
             ? 'Выбрать фото — сохранится локально'
-            : 'Выбрать фото или снять на камеру'}
+            : hasCamera
+              ? 'Выбрать фото или снять на камеру'
+              : 'Выбрать фото'}
         <input
           type="file"
           accept="image/*"

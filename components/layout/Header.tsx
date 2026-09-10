@@ -13,6 +13,7 @@ import { NavLinks } from './NavLinks';
 interface HeaderProps {
   fullName: string;
   role: UserRole;
+  inboxCount: number;
 }
 
 // Тёмная шапка #1a1f2e — тот же дизайн, что и раньше, только теперь между
@@ -20,7 +21,7 @@ interface HeaderProps {
 // Списки участков грузятся серверно (кэшируются React'ом через cache()) —
 // клиентский PolygonSwitcher получает уже готовые пропсы, а активный
 // polygon сам достаёт из URL (?polygon=<id>).
-export async function Header({ fullName, role }: HeaderProps) {
+export async function Header({ fullName, role, inboxCount }: HeaderProps) {
   const [myPolygons, sharedPolygons, publicPolygons] = await Promise.all([
     listMyPolygons(),
     listSharedWithMePolygons(),
@@ -32,7 +33,7 @@ export async function Header({ fullName, role }: HeaderProps) {
       <div className="flex min-w-0 items-center gap-4">
         <span className="hidden text-lg font-semibold sm:block">ГеоКрио ГИС</span>
         <div className="hidden md:block">
-          <NavLinks isAdmin={role === 'admin'} />
+          <NavLinks isAdmin={role === 'admin'} inboxCount={inboxCount} />
         </div>
       </div>
       <div className="flex min-w-0 items-center gap-3">

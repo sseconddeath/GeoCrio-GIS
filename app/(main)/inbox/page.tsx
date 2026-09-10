@@ -1,14 +1,16 @@
 import Link from 'next/link';
 import { ProposalList } from '@/components/proposals/ProposalList';
-import { listMyInbox } from '@/lib/supabase/queries';
+import { listMyDecidedProposals, listMyInbox } from '@/lib/supabase/queries';
 import { createClient } from '@/lib/supabase/server';
 
 // Мои уведомления — центр правок и обратной связи.
 //
-// Входящие: чужие pending-предложения по моим объектам (нужно решить).
-// Исходящие: мои pending-предложения (жду решения автора или голосов
-// сообщества). Отдельно отсеиваем — чтобы автор объекта не голосовал
-// за своё, а автор предложения не мешал сам голосованию.
+// Три секции:
+//  - Входящие: чужие pending-предложения по моим объектам (нужно решить).
+//  - Исходящие: мои pending-предложения (жду решения автора или голосов).
+//  - История: последние 50 решённых (accepted/applied/rejected/withdrawn)
+//    в обе стороны — чтобы автор предложения увидел «моё принято/отклонено»,
+//    а автор объекта — «что я решил на прошлой неделе».
 export default async function InboxPage() {
   const supabase = await createClient();
   const {
@@ -16,7 +18,12 @@ export default async function InboxPage() {
   } = await supabase.auth.getUser();
   const currentUserId = user?.id ?? null;
 
-  const { incoming, outgoing } = await listMyInbox();
+  const [{ incoming, outgoing }, history] = await Promise.all([
+    listMyInbox(),
+    listMyDecidedProposals(),
+  ]);
+
+  const totalHistory = history.incoming.length + history.outgoing.length;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -53,6 +60,35 @@ export default async function InboxPage() {
           showTargetLink
         />
       </section>
+
+      {totalHistory > 0 ? (
+        <>
+          <section className="mt-8 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">История: по моим объектам</h2>
+              <span className="text-xs text-gray-500">Последние {history.incoming.length}</span>
+            </div>
+            <ProposalList
+              proposals={history.incoming}
+              currentUserId={currentUserId}
+              emptyLabel="Пока нет решённых предложений по вашим объектам."
+              showTargetLink
+            />
+          </section>
+          <section className="mt-8 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">История: мои предложения</h2>
+              <span className="text-xs text-gray-500">Последние {history.outgoing.length}</span>
+            </div>
+            <ProposalList
+              proposals={history.outgoing}
+              currentUserId={currentUserId}
+              emptyLabel="Пока нет решённых ваших предложений."
+              showTargetLink
+            />
+          </section>
+        </>
+      ) : null}
 
       <div className="mt-8 text-sm">
         <Link href="/map" className="text-header hover:underline">

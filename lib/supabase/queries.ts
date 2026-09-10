@@ -677,6 +677,31 @@ export interface EditProposalWithMeta extends EditProposalRow {
   target_code: string | null;
 }
 
+// Решённые предложения для объекта (accepted/applied/rejected/withdrawn).
+// Используется на карточке объекта, чтобы показать «что уже прошло
+// через сообщество» рядом с pending — важно для понимания истории
+// доверия к данным.
+export async function listDecidedProposalsForObject(
+  targetTable: 'boreholes' | 'observation_points',
+  targetId: string,
+): Promise<EditProposalWithMeta[]> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const { data: rawRows } = await supabase
+    .from('edit_proposals')
+    .select('*')
+    .eq('target_table', targetTable)
+    .eq('target_id', targetId)
+    .in('status', ['accepted', 'applied', 'rejected', 'withdrawn'])
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  const rows = (rawRows as EditProposalRow[] | null) ?? [];
+  if (rows.length === 0) return [];
+  return enrichProposals(rows, user?.id ?? null);
+}
+
 // Читаем pending-предложения для объекта. Использует RLS: невидимые
 // предложения (чужой приватный полигон) не вернутся.
 export async function listPendingProposalsForObject(
@@ -699,6 +724,48 @@ export async function listPendingProposalsForObject(
   if (rows.length === 0) return [];
 
   return enrichProposals(rows, user?.id ?? null);
+}
+
+// Быстрый счётчик входящих pending-предложений (для бейджа в шапке /
+// мобильной навигации). Не тянет данные, только COUNT. Возвращает 0
+// при отсутствии сессии — чтобы вызов из layout был безопасным.
+export async function countMyIncomingPendingProposals(): Promise<number> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return 0;
+
+  const [myBoreholes, myPoints] = await Promise.all([
+    supabase.from('boreholes').select('id').eq('created_by', user.id).eq('is_deleted', false),
+    supabase
+      .from('observation_points')
+      .select('id')
+      .eq('created_by', user.id)
+      .eq('is_deleted', false),
+  ]);
+  const boreholeIds = ((myBoreholes.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  const pointIds = ((myPoints.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+
+  const [bhCount, opCount] = await Promise.all([
+    boreholeIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('id', { count: 'exact', head: true })
+          .eq('target_table', 'boreholes')
+          .in('target_id', boreholeIds)
+          .eq('status', 'pending')
+      : Promise.resolve({ count: 0 }),
+    pointIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('id', { count: 'exact', head: true })
+          .eq('target_table', 'observation_points')
+          .in('target_id', pointIds)
+          .eq('status', 'pending')
+      : Promise.resolve({ count: 0 }),
+  ]);
+  return (bhCount.count ?? 0) + (opCount.count ?? 0);
 }
 
 // Инбокс: 1) чужие pending-предложения по МОИМ объектам (мне решать);
@@ -766,6 +833,74 @@ export async function listMyInbox(): Promise<{
     enrichProposals(outgoingRaw, user.id),
   ]);
 
+  return { incoming, outgoing };
+}
+
+// История: решённые (не pending, не withdrawn) предложения, где я был
+// автором объекта или автором предложения. Ограничение 50 записей —
+// достаточно чтобы посмотреть недавнее, для полного архива будет
+// отдельный экран.
+export async function listMyDecidedProposals(): Promise<{
+  incoming: EditProposalWithMeta[];
+  outgoing: EditProposalWithMeta[];
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { incoming: [], outgoing: [] };
+
+  const [myBoreholes, myPoints] = await Promise.all([
+    supabase.from('boreholes').select('id').eq('created_by', user.id),
+    supabase.from('observation_points').select('id').eq('created_by', user.id),
+  ]);
+  const myBoreholeIds = ((myBoreholes.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  const myPointIds = ((myPoints.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+
+  const decidedStatuses = ['accepted', 'rejected', 'applied', 'withdrawn'] as const;
+  const [incomingBoreholesRes, incomingPointsRes, outgoingRes] = await Promise.all([
+    myBoreholeIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('*')
+          .eq('target_table', 'boreholes')
+          .in('target_id', myBoreholeIds)
+          .in('status', [...decidedStatuses])
+          .order('updated_at', { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as EditProposalRow[] }),
+    myPointIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('*')
+          .eq('target_table', 'observation_points')
+          .in('target_id', myPointIds)
+          .in('status', [...decidedStatuses])
+          .order('updated_at', { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as EditProposalRow[] }),
+    supabase
+      .from('edit_proposals')
+      .select('*')
+      .eq('proposed_by', user.id)
+      .in('status', [...decidedStatuses])
+      .order('updated_at', { ascending: false })
+      .limit(50),
+  ]);
+
+  const incomingRaw = [
+    ...(((incomingBoreholesRes as { data: EditProposalRow[] | null }).data) ?? []),
+    ...(((incomingPointsRes as { data: EditProposalRow[] | null }).data) ?? []),
+  ];
+  incomingRaw.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+
+  const outgoingRaw = ((outgoingRes.data as EditProposalRow[] | null) ?? [])
+    .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+
+  const [incoming, outgoing] = await Promise.all([
+    enrichProposals(incomingRaw.slice(0, 50), user.id),
+    enrichProposals(outgoingRaw.slice(0, 50), user.id),
+  ]);
   return { incoming, outgoing };
 }
 
