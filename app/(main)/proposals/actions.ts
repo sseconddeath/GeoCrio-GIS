@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import type { ZodError } from 'zod';
+import { sendPushToUser } from '@/lib/push';
 import { createClient } from '@/lib/supabase/server';
 import { translateDbError } from '@/lib/supabase/db-errors';
 import {
@@ -67,6 +68,25 @@ export async function createEditProposalAction(
     proposed_data,
   });
   if (error) return { error: translateDbError(error) };
+
+  // Push автору целевого объекта — «пришло предложение правки».
+  // Не блокируем: если сеть до push-сервиса отвалит, пользователь всё
+  // равно увидит через inbox-бейдж при следующем открытии приложения.
+  const table = input.targetTable === 'boreholes' ? 'boreholes' : 'observation_points';
+  const { data: targetRow } = await supabase
+    .from(table)
+    .select('code, created_by')
+    .eq('id', input.targetId)
+    .maybeSingle();
+  const target = targetRow as { code: string; created_by: string | null } | null;
+  if (target?.created_by && target.created_by !== user.id) {
+    void sendPushToUser(target.created_by, {
+      title: 'Новое предложение правки',
+      body: `${target.code}: ${input.reason.slice(0, 120)}`,
+      url: '/inbox',
+      tag: `proposal-${input.targetId}`,
+    });
+  }
 
   revalidatePath(input.targetTable === 'boreholes'
     ? `/boreholes/${input.targetId}`

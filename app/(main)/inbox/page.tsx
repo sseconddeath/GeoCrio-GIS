@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { ProposalList } from '@/components/proposals/ProposalList';
+import { PushSubscribeToggle } from '@/components/pwa/PushSubscribeToggle';
 import { listMyDecidedProposals, listMyInbox } from '@/lib/supabase/queries';
 import { createClient } from '@/lib/supabase/server';
 
@@ -32,6 +33,10 @@ export default async function InboxPage() {
         Предложения правок ваших объектов от других геологов и статусы ваших предложений
         на чужие объекты.
       </p>
+
+      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+        <PushSubscribeToggle />
+      </div>
 
       <section className="mt-8 space-y-3">
         <div className="flex items-center justify-between">

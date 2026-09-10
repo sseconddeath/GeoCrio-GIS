@@ -118,3 +118,47 @@ async function trimCache(cacheName, maxEntries) {
     await cache.delete(keys[i]);
   }
 }
+
+// ============================================================================
+// Web Push уведомления
+// ============================================================================
+//
+// Приходит push от нашего сервера (lib/push.ts) с JSON-пейлоадом
+// {title, body, url?, tag?}. Показываем нативное уведомление; клик
+// открывает /inbox или указанный url в существующей вкладке
+// приложения (или создаёт новую, если приложение закрыто).
+
+sw.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: 'ГеоКрио', body: event.data.text() };
+  }
+  event.waitUntil(
+    sw.registration.showNotification(payload.title ?? 'ГеоКрио', {
+      body: payload.body ?? '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: payload.tag,
+      data: { url: payload.url ?? '/inbox' },
+    }),
+  );
+});
+
+sw.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url ?? '/inbox';
+  event.waitUntil(
+    (async () => {
+      const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const existing = all.find((c) => new URL(c.url).origin === sw.location.origin);
+      if (existing) {
+        await existing.focus();
+        return existing.navigate(targetUrl).catch(() => {});
+      }
+      return sw.clients.openWindow(targetUrl);
+    })(),
+  );
+});

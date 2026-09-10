@@ -221,6 +221,17 @@ export type EditProposalVoteRow = {
   created_at: string;
 }
 
+export type PushSubscriptionRow = {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+}
+
 export type MapObjectRow = {
   id: string;
   name: string;
@@ -419,6 +430,11 @@ export interface Database {
         EditProposalVoteRow,
         Optional<EditProposalVoteRow, 'created_at'>,
         Partial<EditProposalVoteRow>
+      >;
+      push_subscriptions: TableDef<
+        PushSubscriptionRow,
+        Optional<PushSubscriptionRow, 'id' | 'user_agent' | 'created_at' | 'last_seen_at'>,
+        Partial<Omit<PushSubscriptionRow, 'id'>>
       >;
     };
     Views: {
