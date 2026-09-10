@@ -53,5 +53,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  // Пропускаем PWA-статику (manifest, service worker, иконки) — она
+  // публичная и не должна вообще проходить через auth-логику: иначе
+  // регистрация SW и установка на главный экран сломаются на любом
+  // сбое auth-инфраструктуры.
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 };
