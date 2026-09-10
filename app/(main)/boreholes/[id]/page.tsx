@@ -1,13 +1,18 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
+import { MeasurementForm } from '@/components/measurements/MeasurementForm';
+import { MeasurementList } from '@/components/measurements/MeasurementList';
+import { TemperatureProfileChart } from '@/components/measurements/TemperatureProfileChart';
 import { PhotoGallery } from '@/components/photos/PhotoGallery';
 import { PhotoUploader } from '@/components/photos/PhotoUploader';
-import { PERMAFROST_LABELS, SOIL_TYPE_LABELS } from '@/lib/constants';
+import { COLORS, PERMAFROST_LABELS, SOIL_TYPE_LABELS } from '@/lib/constants';
 import {
   canWritePolygon,
   getBoreholeFeature,
+  getBoreholeTemperatureProfile,
   getProfileById,
+  listMeasurementsForBorehole,
   listPhotosForParent,
 } from '@/lib/supabase/queries';
 import { softDeleteBoreholeAction } from '../actions';
@@ -24,11 +29,16 @@ export default async function BoreholePage({
   const b = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
 
-  const [author, canEdit, photos] = await Promise.all([
+  const [author, canEdit, photos, measurements, profile] = await Promise.all([
     getProfileById(b.created_by),
     canWritePolygon(b.polygon_id),
     listPhotosForParent({ kind: 'borehole', id }),
+    listMeasurementsForBorehole(id),
+    getBoreholeTemperatureProfile(id),
   ]);
+
+  const lastMeasurement = measurements[0] ?? null;
+  const status = permafrostStatus(lastMeasurement?.temperature_c ?? null);
 
   const deleteAction = softDeleteBoreholeAction.bind(null, id);
 
@@ -87,24 +97,44 @@ export default async function BoreholePage({
         ) : null}
       </dl>
 
-      <div className="mt-6 space-y-4">
-        <PhotoGallery photos={photos} parent={{ kind: 'borehole', id }} canEdit={canEdit} />
-        {canEdit ? <PhotoUploader parent={{ kind: 'borehole', id }} /> : null}
+      <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden
+            className="inline-block h-3.5 w-3.5 rounded-full border border-white shadow"
+            style={{ backgroundColor: statusColor(status) }}
+          />
+          <div className="flex-1">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Статус мерзлоты</div>
+            <div className="text-sm font-medium text-gray-900">{PERMAFROST_LABELS[status]}</div>
+          </div>
+          {lastMeasurement ? (
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wide text-gray-500">Последний замер</div>
+              <div className="font-mono text-sm text-gray-900">
+                {formatT(lastMeasurement.temperature_c)} · {lastMeasurement.depth_m} м
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div className="mt-6 rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
-        <div className="mb-1 inline-block rounded-full bg-header/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-header">
-          Этап 5
-        </div>
-        <p className="mt-2">
-          Температурные замеры и профиль по глубине появятся на Этапе 5. Температурный статус
-          мерзлоты рассчитывается автоматически по последнему замеру:{' '}
-          <span className="font-medium">
-            {b.is_deleted ? 'скважина удалена' : PERMAFROST_LABELS.unknown}
-          </span>
-          .
-        </p>
-      </div>
+      <section className="mt-6 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900">Температурные замеры</h2>
+        <TemperatureProfileChart profile={profile} />
+        <MeasurementList
+          boreholeId={id}
+          measurements={measurements}
+          canEdit={canEdit}
+        />
+        {canEdit ? <MeasurementForm boreholeId={id} /> : null}
+      </section>
+
+      <section className="mt-6 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900">Фото</h2>
+        <PhotoGallery photos={photos} parent={{ kind: 'borehole', id }} canEdit={canEdit} />
+        {canEdit ? <PhotoUploader parent={{ kind: 'borehole', id }} /> : null}
+      </section>
 
       {canEdit ? (
         <div className="mt-6 flex gap-3">
@@ -123,4 +153,26 @@ export default async function BoreholePage({
       )}
     </div>
   );
+}
+
+// Вычисление статуса мерзлоты по последнему замеру — та же логика, что
+// в БД-view map_objects: <-0.5 = мёрзлый, >+0.5 = талый, между —
+// переходный. null → unknown.
+function permafrostStatus(t: number | null): 'frozen' | 'thawed' | 'transitional' | 'unknown' {
+  if (t === null) return 'unknown';
+  if (t < -0.5) return 'frozen';
+  if (t > 0.5) return 'thawed';
+  return 'transitional';
+}
+
+function statusColor(status: 'frozen' | 'thawed' | 'transitional' | 'unknown'): string {
+  if (status === 'frozen') return COLORS.permafrost.frozen;
+  if (status === 'thawed') return COLORS.permafrost.thawed;
+  if (status === 'transitional') return COLORS.permafrost.transitional;
+  return '#9ca3af';
+}
+
+function formatT(t: number): string {
+  const sign = t > 0 ? '+' : '';
+  return `${sign}${t.toFixed(2)} °C`;
 }

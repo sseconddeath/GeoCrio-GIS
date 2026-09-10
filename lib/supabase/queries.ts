@@ -2,7 +2,9 @@ import { cache } from 'react';
 import { createClient } from './server';
 import type {
   BoreholeRow,
+  BoreholeTemperatureProfileRow,
   MapObjectRow,
+  MeasurementRow,
   ObservationPointRow,
   PolygonMemberRow,
   PolygonRow,
@@ -316,4 +318,39 @@ export async function listPhotosForParent(
     fullUrl: fullMap.get(r.storage_path) ?? null,
     thumbUrl: r.thumbnail_path ? thumbMap.get(r.thumbnail_path) ?? null : null,
   }));
+}
+
+// ============================================================================
+// Замеры температуры (Этап 4)
+// ============================================================================
+
+// Все замеры скважины, свежие сверху. RLS-фильтр наследуется от helper
+// fn_can_read_polygon (мутации так же через fn_can_write_polygon).
+export async function listMeasurementsForBorehole(
+  boreholeId: string,
+): Promise<MeasurementRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('measurements')
+    .select('*')
+    .eq('borehole_id', boreholeId)
+    .eq('is_deleted', false)
+    .order('measured_at', { ascending: false })
+    .order('depth_m', { ascending: true });
+  return (data as MeasurementRow[]) ?? [];
+}
+
+// Температурный профиль T(z) — по одному значению на глубину (view
+// borehole_temperature_profile сама берёт свежее измерение на каждой
+// глубине через DISTINCT ON).
+export async function getBoreholeTemperatureProfile(
+  boreholeId: string,
+): Promise<BoreholeTemperatureProfileRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('borehole_temperature_profile')
+    .select('*')
+    .eq('borehole_id', boreholeId)
+    .order('depth_m', { ascending: true });
+  return (data as BoreholeTemperatureProfileRow[]) ?? [];
 }

@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { PolygonRow, PolygonStatsRow } from '@/lib/supabase/types';
 import { AddObjectPanel } from './AddObjectPanel';
-import { LayerPanel, type LayerVisibility } from './LayerPanel';
+import { LayerPanel, type LayerVisibility, type MapColorMode } from './LayerPanel';
 import { MapView, type MapObjectProperties } from './MapView';
 import { Popup } from './Popup';
 import { RealtimeRefresh } from './RealtimeRefresh';
@@ -25,6 +25,7 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
     observationPoints: true,
     polygonBoundary: true,
   });
+  const [colorMode, setColorMode] = useState<MapColorMode>('type');
   const [selectedFeature, setSelectedFeature] = useState<
     GeoJSON.Feature<GeoJSON.Point, MapObjectProperties> | null
   >(null);
@@ -79,7 +80,9 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           polygonName={polygon.name}
           stats={stats}
           visibility={visibility}
+          colorMode={colorMode}
           onToggle={(key) => setVisibility((v) => ({ ...v, [key]: !v[key] }))}
+          onChangeColorMode={setColorMode}
         />
       </aside>
 
@@ -97,6 +100,7 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           polygon={polygon}
           objects={filteredObjects}
           showPolygonBoundary={visibility.polygonBoundary}
+          colorMode={colorMode}
           onFeatureClick={handleFeatureClick}
           onCursorMove={(lng, lat) => setCursor({ lng, lat })}
           onViewChange={(lng, lat) => setViewCenter({ lng, lat })}

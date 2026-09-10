@@ -39,10 +39,17 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
+export type MapColorMode = 'type' | 'permafrost';
+
 interface MapViewProps {
   polygon: PolygonRow;
   objects: GeoJSON.FeatureCollection<GeoJSON.Point, MapObjectProperties>;
   showPolygonBoundary?: boolean;
+  // 'type' — оранжевый для скважин, фиолетовый для точек;
+  // 'permafrost' — раскраска по статусу мерзлоты (главный визуальный
+  // инсайт: где мёрзлый грунт, где талый, где переход). Для точек
+  // наблюдений (permafrost_status = null) — серый.
+  colorMode?: MapColorMode;
   onMapClick?: (lng: number, lat: number) => void;
   onFeatureClick?: (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => void;
   onCursorMove?: (lng: number, lat: number) => void;
@@ -51,10 +58,35 @@ interface MapViewProps {
   onViewChange?: (lng: number, lat: number) => void;
 }
 
+// MapLibre paint-выражение для одиночных маркеров, по режиму раскраски.
+function circleColorExpr(mode: MapColorMode): maplibregl.DataDrivenPropertyValueSpecification<string> {
+  if (mode === 'type') {
+    return [
+      'case',
+      ['==', ['get', 'type'], 'borehole'],
+      COLORS.borehole,
+      COLORS.observationPoint,
+    ];
+  }
+  // permafrost: match по свойству permafrost_status из map_objects view.
+  return [
+    'match',
+    ['coalesce', ['get', 'permafrost_status'], 'unknown'],
+    'frozen',
+    COLORS.permafrost.frozen,
+    'thawed',
+    COLORS.permafrost.thawed,
+    'transitional',
+    COLORS.permafrost.transitional,
+    /* default */ '#9ca3af',
+  ];
+}
+
 export function MapView({
   polygon,
   objects,
   showPolygonBoundary = true,
+  colorMode = 'type',
   onMapClick,
   onFeatureClick,
   onCursorMove,
@@ -151,19 +183,16 @@ export function MapView({
         paint: { 'text-color': '#ffffff' },
       });
 
-      // Отдельные объекты (не кластер): скважина — оранжевая, точка — фиолетовая.
+      // Отдельные объекты (не кластер). Цвет — по выбранному режиму
+      // (тип объекта или статус мерзлоты); paint пересобирается при
+      // смене режима отдельным useEffect ниже.
       map.addLayer({
         id: 'objects-unclustered',
         type: 'circle',
         source: 'objects',
         filter: ['!', ['has', 'point_count']],
         paint: {
-          'circle-color': [
-            'case',
-            ['==', ['get', 'type'], 'borehole'],
-            COLORS.borehole,
-            COLORS.observationPoint,
-          ],
+          'circle-color': circleColorExpr(colorMode),
           'circle-radius': 8,
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff',
@@ -287,6 +316,19 @@ export function MapView({
     if (map.isStyleLoaded()) apply();
     else map.once('load', apply);
   }, [showPolygonBoundary]);
+
+  // Смена цвета маркеров при переключении режима — без пересоздания карты.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      if (map.getLayer('objects-unclustered')) {
+        map.setPaintProperty('objects-unclustered', 'circle-color', circleColorExpr(colorMode));
+      }
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once('load', apply);
+  }, [colorMode]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }

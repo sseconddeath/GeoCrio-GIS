@@ -149,3 +149,48 @@ export const polygonInviteSchema = z.object({
 
 export type PolygonInput = z.infer<typeof polygonSchema>;
 export type PolygonInviteInput = z.infer<typeof polygonInviteSchema>;
+
+// ============================================================================
+// Этап 4: замеры температуры
+// ============================================================================
+
+// Диапазоны копируем из CHECK-констрейнтов measurements
+// (см. supabase/migrations/001_initial_schema.sql):
+//   depth_m       0.01…500 м
+//   temperature_c −50…+50 °C
+//   measured_at   не в будущем (запас в час на рассинхрон часов клиента).
+const measurementDepth = requiredNumber.refine(
+  (n) => n > 0 && n <= 500,
+  'Глубина должна быть в пределах 0…500 м',
+);
+
+const measurementTemperature = requiredNumber.refine(
+  (n) => n >= -50 && n <= 50,
+  'Температура должна быть в пределах −50…+50 °C',
+);
+
+// Принимаем datetime-local строку (напр. "2026-03-15T14:30") — из
+// <input type="datetime-local"> формы, или полноценный ISO с
+// таймзоной из тестов.
+const measurementDate = z
+  .union([z.string(), z.date()])
+  .transform((v) => (typeof v === 'string' ? v : v.toISOString()))
+  .refine((v) => !Number.isNaN(Date.parse(v)), 'Введите корректную дату/время замера')
+  .refine(
+    (v) => Date.parse(v) <= Date.now() + 60 * 60 * 1000,
+    'Дата замера не может быть в будущем',
+  );
+
+const measurementNotes = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => (v == null || v === '' ? null : v));
+
+export const measurementSchema = z.object({
+  boreholeId: z.string().uuid('Некорректный идентификатор скважины'),
+  depth_m: measurementDepth,
+  temperature_c: measurementTemperature,
+  measured_at: measurementDate,
+  notes: measurementNotes,
+});
+
+export type MeasurementInput = z.infer<typeof measurementSchema>;
