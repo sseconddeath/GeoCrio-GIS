@@ -480,6 +480,192 @@ export async function listObjectHistory(
 }
 
 // ============================================================================
+// Админ-панель (Этап 6.3)
+// ============================================================================
+
+export interface AdminUserRow {
+  id: string;
+  full_name: string;
+  role: 'admin' | 'researcher' | 'student';
+  created_at: string;
+  polygons_owned: number;
+  polygons_member: number;
+}
+
+// Список всех пользователей платформы для админа. RLS на profiles —
+// SELECT для всех аутентифицированных, поэтому запрос проходит. Роль
+// admin гарантирована layout'ом /admin/*. Считаем «своих» участков
+// и «состоит-в-команде» одним IN-запросом.
+export async function listAllUsersForAdmin(): Promise<AdminUserRow[]> {
+  const supabase = await createClient();
+  const [profilesRes, ownershipRes, membershipRes] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('id, full_name, role, created_at')
+      .order('created_at', { ascending: false }),
+    supabase.from('polygons').select('created_by'),
+    supabase.from('polygon_members').select('user_id'),
+  ]);
+  const profiles =
+    (profilesRes.data as Array<{
+      id: string;
+      full_name: string;
+      role: 'admin' | 'researcher' | 'student';
+      created_at: string;
+    }> | null) ?? [];
+  const ownerCounts = new Map<string, number>();
+  for (const p of ((ownershipRes.data as Array<{ created_by: string | null }> | null) ?? [])) {
+    if (!p.created_by) continue;
+    ownerCounts.set(p.created_by, (ownerCounts.get(p.created_by) ?? 0) + 1);
+  }
+  const memberCounts = new Map<string, number>();
+  for (const m of ((membershipRes.data as Array<{ user_id: string }> | null) ?? [])) {
+    memberCounts.set(m.user_id, (memberCounts.get(m.user_id) ?? 0) + 1);
+  }
+  return profiles.map((p) => ({
+    id: p.id,
+    full_name: p.full_name,
+    role: p.role,
+    created_at: p.created_at,
+    polygons_owned: ownerCounts.get(p.id) ?? 0,
+    polygons_member: memberCounts.get(p.id) ?? 0,
+  }));
+}
+
+export interface RecentAuditEntry {
+  id: string;
+  created_at: string;
+  action: 'insert' | 'update' | 'delete' | 'restore' | 'sync';
+  table_name: string;
+  record_id: string;
+  user_id: string | null;
+  user_name: string | null;
+}
+
+// Свежий срез audit_log — только для админа (RLS: al_read USING
+// (is_admin())). Один JOIN на profiles одним IN-подгрузом.
+export async function listRecentAudit(limit = 100): Promise<RecentAuditEntry[]> {
+  const supabase = await createClient();
+  const { data: raw } = await supabase
+    .from('audit_log')
+    .select('id, created_at, action, table_name, record_id, user_id')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  const rows =
+    (raw as Array<{
+      id: string;
+      created_at: string;
+      action: 'insert' | 'update' | 'delete' | 'restore' | 'sync';
+      table_name: string;
+      record_id: string;
+      user_id: string | null;
+    }> | null) ?? [];
+  if (rows.length === 0) return [];
+  const userIds = Array.from(new Set(rows.map((r) => r.user_id).filter(Boolean))) as string[];
+  const nameById = new Map<string, string>();
+  if (userIds.length > 0) {
+    const { data } = await supabase.from('profiles').select('id, full_name').in('id', userIds);
+    for (const p of ((data as Array<{ id: string; full_name: string }> | null) ?? [])) {
+      nameById.set(p.id, p.full_name);
+    }
+  }
+  return rows.map((r) => ({
+    ...r,
+    user_name: r.user_id ? nameById.get(r.user_id) ?? null : null,
+  }));
+}
+
+// ============================================================================
+// Аналитика (Этап 6.2)
+// ============================================================================
+
+export interface PermafrostBreakdown {
+  frozen: number;
+  thawed: number;
+  transitional: number;
+  unknown: number;
+}
+
+export interface MeasurementsPerDay {
+  date: string; // ISO YYYY-MM-DD
+  count: number;
+}
+
+export interface PolygonAnalytics {
+  polygon: PolygonRow;
+  stats: PolygonStatsRow | null;
+  breakdown: PermafrostBreakdown;
+  measurementsPerDay: MeasurementsPerDay[]; // за последние 30 дней, отсортировано
+  // Средняя температура последнего замера на каждой скважине —
+  // грубая температурная характеристика участка.
+  avgLastTemp: number | null;
+  totalMeasurements: number;
+}
+
+export async function getPolygonAnalytics(
+  polygonId: string,
+): Promise<PolygonAnalytics | null> {
+  const supabase = await createClient();
+
+  const [polygon, stats, mapObjects] = await Promise.all([
+    getPolygon(polygonId),
+    getPolygonStats(polygonId),
+    supabase
+      .from('map_objects')
+      .select('type, permafrost_status, last_temperature')
+      .eq('polygon_id', polygonId),
+  ]);
+  if (!polygon) return null;
+
+  const breakdown: PermafrostBreakdown = {
+    frozen: 0,
+    thawed: 0,
+    transitional: 0,
+    unknown: 0,
+  };
+  const lastTemps: number[] = [];
+  for (const row of ((mapObjects.data as Array<{
+    type: string;
+    permafrost_status: keyof PermafrostBreakdown | null;
+    last_temperature: number | null;
+  }> | null) ?? [])) {
+    if (row.type !== 'borehole') continue;
+    const key = (row.permafrost_status ?? 'unknown') as keyof PermafrostBreakdown;
+    breakdown[key] = (breakdown[key] ?? 0) + 1;
+    if (row.last_temperature != null) lastTemps.push(Number(row.last_temperature));
+  }
+  const avgLastTemp = lastTemps.length > 0
+    ? lastTemps.reduce((s, v) => s + v, 0) / lastTemps.length
+    : null;
+
+  // Замеры за 30 дней: одно поле measured_at из measurements, дальше
+  // группируем по дню в Node — count-агрегация на клиенте, чтобы не
+  // тянуть RPC/GROUP BY в БД. За 30 дней даже на активном полигоне
+  // это сотни строк — норм.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: measRaw } = await supabase
+    .from('measurements')
+    .select('measured_at, borehole_id, boreholes!inner(polygon_id)')
+    .eq('is_deleted', false)
+    .gte('measured_at', since)
+    .eq('boreholes.polygon_id', polygonId);
+
+  const perDay = new Map<string, number>();
+  for (const m of ((measRaw as Array<{ measured_at: string }> | null) ?? [])) {
+    const day = m.measured_at.slice(0, 10);
+    perDay.set(day, (perDay.get(day) ?? 0) + 1);
+  }
+  const measurementsPerDay: MeasurementsPerDay[] = [];
+  for (let d = 29; d >= 0; d--) {
+    const iso = new Date(Date.now() - d * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    measurementsPerDay.push({ date: iso, count: perDay.get(iso) ?? 0 });
+  }
+  const totalMeasurements = measurementsPerDay.reduce((s, r) => s + r.count, 0);
+
+  return { polygon, stats, breakdown, measurementsPerDay, avgLastTemp, totalMeasurements };
+}
+
+// ============================================================================
 // Предложения правок (Этап 5.3)
 // ============================================================================
 
