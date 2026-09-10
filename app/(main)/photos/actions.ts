@@ -118,28 +118,48 @@ export async function uploadPhotoAction(input: UploadPhotoInput): Promise<Upload
   return { success: true };
 }
 
-export async function deletePhotoAction(id: string, parent: {
-  kind: 'borehole' | 'observation_point';
-  id: string;
-}): Promise<void> {
+// Удаление фото: сначала пытаемся снять RLS-запись (это единственная
+// авторитетная проверка права — политика ph_delete требует
+// fn_can_write_polygon). Если БД отказала — не трогаем Storage, чтобы
+// не оставить «висячие» файлы. Только когда DB-запись успешно
+// удалилась — удаляем сами файлы из Storage. Возвращаем {ok, error},
+// а не throw — вызывающий покажет toast.
+export async function deletePhotoAction(
+  id: string,
+  parent: { kind: 'borehole' | 'observation_point'; id: string },
+): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: photo } = await supabase
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Требуется вход в систему' };
+
+  const { data: photo, error: readErr } = await supabase
     .from('photos')
     .select('storage_path, thumbnail_path')
     .eq('id', id)
     .maybeSingle();
+  if (readErr) return { ok: false, error: translateDbError(readErr) };
   const p = photo as { storage_path: string; thumbnail_path: string | null } | null;
-  if (p) {
-    await Promise.all([
-      supabase.storage.from('photos').remove([p.storage_path]),
-      p.thumbnail_path ? supabase.storage.from('thumbnails').remove([p.thumbnail_path]) : null,
-    ]);
-  }
-  await supabase.from('photos').delete().eq('id', id);
+  if (!p) return { ok: false, error: 'Фото не найдено или уже удалено' };
+
+  const { error: delErr, count } = await supabase
+    .from('photos')
+    .delete({ count: 'exact' })
+    .eq('id', id);
+  if (delErr) return { ok: false, error: translateDbError(delErr) };
+  if (count === 0) return { ok: false, error: 'Нет прав удалять это фото' };
+
+  await Promise.all([
+    supabase.storage.from('photos').remove([p.storage_path]),
+    p.thumbnail_path ? supabase.storage.from('thumbnails').remove([p.thumbnail_path]) : null,
+  ]);
+
   if (parent.kind === 'borehole') {
     revalidatePath(`/boreholes/${parent.id}`);
   } else {
     revalidatePath(`/observation-points/${parent.id}`);
   }
   revalidatePath('/map');
+  return { ok: true };
 }

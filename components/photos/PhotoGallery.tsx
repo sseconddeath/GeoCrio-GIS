@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { useToast } from '@/components/ui/Toast';
 import { deletePhotoAction } from '@/app/(main)/photos/actions';
 import type { PhotoWithUrls } from '@/lib/supabase/queries';
 
@@ -14,8 +16,24 @@ export function PhotoGallery({ photos, parent, canEdit }: PhotoGalleryProps) {
   const [lightbox, setLightbox] = useState<PhotoWithUrls | null>(null);
   const [pendingId, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<PhotoWithUrls | null>(null);
+  const { showToast } = useToast();
 
   if (photos.length === 0) return null;
+
+  const runDelete = (photo: PhotoWithUrls) => {
+    setBusyId(photo.id);
+    startTransition(async () => {
+      const result = await deletePhotoAction(photo.id, parent);
+      setBusyId(null);
+      setConfirmDelete(null);
+      if (result.ok) {
+        showToast({ kind: 'success', message: 'Фото удалено.' });
+      } else {
+        showToast({ kind: 'error', message: result.error ?? 'Не удалось удалить' });
+      }
+    });
+  };
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -51,14 +69,7 @@ export function PhotoGallery({ photos, parent, canEdit }: PhotoGalleryProps) {
             {canEdit ? (
               <button
                 type="button"
-                onClick={() => {
-                  if (!window.confirm('Удалить фото?')) return;
-                  setBusyId(photo.id);
-                  startTransition(async () => {
-                    await deletePhotoAction(photo.id, parent);
-                    setBusyId(null);
-                  });
-                }}
+                onClick={() => setConfirmDelete(photo)}
                 disabled={pendingId && busyId === photo.id}
                 className="absolute right-1 top-1 rounded-md bg-white/90 px-2 py-0.5 text-xs text-red-600 opacity-0 shadow group-hover:opacity-100 disabled:opacity-50"
               >
@@ -82,6 +93,21 @@ export function PhotoGallery({ photos, parent, canEdit }: PhotoGalleryProps) {
           />
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="Удалить фото?"
+        description={
+          confirmDelete?.caption
+            ? `«${confirmDelete.caption}». Файл будет удалён из хранилища без возможности восстановить.`
+            : 'Файл будет удалён из хранилища без возможности восстановить.'
+        }
+        confirmLabel="Удалить"
+        danger
+        pending={pendingId && busyId === confirmDelete?.id}
+        onConfirm={() => confirmDelete && runDelete(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }

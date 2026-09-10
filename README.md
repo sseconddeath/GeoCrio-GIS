@@ -226,6 +226,30 @@ Mergin, Fulcrum, ODK, OSM, Wikipedia).
   Управление ролями пока через SQL Editor (в UI не добавлено —
   чтобы не сделать случайно «админ-выстрел в ногу»; отдельный шаг).
 
+- **Security hardening (миграция 007)** — по итогам полного аудита:
+  * Закрыта **HIGH-уязвимость** в edit_proposals: подмена `polygon_id`
+    в INSERT позволяла атакующему создать пропозал на чужую скважину
+    в чужом приватном полигоне (target из закрытого X, polygon_id из
+    своего публичного Y), собрать 3 голоса от подельников и применить
+    правку через триггер (обход RLS `ep_read`). Политика `ep_insert` +
+    `epv_insert` теперь требуют совпадения `polygon_id` с реальным
+    polygon'ом target'а; `fn_apply_edit_proposal` дополнительно
+    проверяет то же в WHERE (defense in depth). Регресс-тест на
+    локальной БД проходит: подмена → RLS FAIL.
+  * Валидация `proposed_data` на сервере через CHECK-триггер: раньше
+    некастуемый `depth_m: "abc"` попадал в БД и клал триггер
+    auto-apply. Теперь падает раньше, на INSERT.
+  * `fn_audit_changes.user_id` теперь берётся с приоритетом из
+    `auth.uid()` (реальный субъект действия), а не из
+    `created_by/measured_by/uploaded_by` записи. В истории видно,
+    кто именно внёс изменение — важно для accepted proposals и
+    admin-действий.
+  * `deletePhotoAction`: явная проверка `auth.getUser()`, порядок
+    операций теперь безопасный (сначала DB DELETE через RLS, только
+    потом Storage remove — исключает «висячие» файлы или строки).
+    Возврат `{ok, error}` вместо throw, `PhotoGallery` использует
+    `ConfirmDialog` + toast вместо `window.confirm`.
+
 ## Локальный запуск миграций
 
 ```bash
