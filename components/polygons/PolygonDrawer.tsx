@@ -62,6 +62,12 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       center,
       zoom,
       attributionControl: { compact: true },
+      // Двойной тап-zoom мешает клику по карте: быстро тыкаешь чтобы
+      // добавить вершину — карта воспринимает как double-click и зумит.
+      // Terra-draw формально отключает doubleClickZoom своим адаптером,
+      // но между init map'ы и стартом draw есть окно, когда двойной
+      // клик проходит. Выключаем сразу.
+      doubleClickZoom: false,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
