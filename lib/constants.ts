@@ -71,6 +71,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/map', label: 'Карта' },
   { href: '/polygons', label: 'Участки' },
   { href: '/data', label: 'Данные' },
+  { href: '/inbox', label: 'Уведомления' },
   { href: '/analytics', label: 'Аналитика' },
   { href: '/export', label: 'Экспорт' },
 ];

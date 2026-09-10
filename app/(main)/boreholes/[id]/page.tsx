@@ -7,6 +7,8 @@ import { MeasurementList } from '@/components/measurements/MeasurementList';
 import { TemperatureProfileChart } from '@/components/measurements/TemperatureProfileChart';
 import { PhotoGallery } from '@/components/photos/PhotoGallery';
 import { PhotoUploader } from '@/components/photos/PhotoUploader';
+import { ProposalList } from '@/components/proposals/ProposalList';
+import { ProposeEditForm } from '@/components/proposals/ProposeEditForm';
 import { COLORS, PERMAFROST_LABELS, SOIL_TYPE_LABELS } from '@/lib/constants';
 import {
   canWritePolygon,
@@ -15,8 +17,10 @@ import {
   getProfileById,
   listMeasurementsForBorehole,
   listObjectHistory,
+  listPendingProposalsForObject,
   listPhotosForParent,
 } from '@/lib/supabase/queries';
+import { createClient } from '@/lib/supabase/server';
 import { softDeleteBoreholeAction } from '../actions';
 
 export default async function BoreholePage({
@@ -31,13 +35,21 @@ export default async function BoreholePage({
   const b = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
 
-  const [author, canEdit, photos, measurements, profile, history] = await Promise.all([
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const currentUserId = user?.id ?? null;
+  const isAuthor = currentUserId !== null && b.created_by === currentUserId;
+
+  const [author, canEdit, photos, measurements, profile, history, proposals] = await Promise.all([
     getProfileById(b.created_by),
     canWritePolygon(b.polygon_id),
     listPhotosForParent({ kind: 'borehole', id }),
     listMeasurementsForBorehole(id),
     getBoreholeTemperatureProfile(id),
     listObjectHistory('boreholes', id),
+    listPendingProposalsForObject('boreholes', id),
   ]);
 
   const lastMeasurement = measurements[0] ?? null;
@@ -137,6 +149,34 @@ export default async function BoreholePage({
         <h2 className="text-lg font-semibold text-gray-900">Фото</h2>
         <PhotoGallery photos={photos} parent={{ kind: 'borehole', id }} canEdit={canEdit} />
         {canEdit ? <PhotoUploader parent={{ kind: 'borehole', id }} /> : null}
+      </section>
+
+      <section className="mt-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Предложения правок</h2>
+          {!isAuthor && currentUserId ? (
+            <ProposeEditForm
+              targetTable="boreholes"
+              targetId={id}
+              polygonId={b.polygon_id}
+              current={{
+                code: b.code,
+                depth_m: b.depth_m,
+                soil_type: b.soil_type,
+                description: b.description,
+              }}
+            />
+          ) : null}
+        </div>
+        <ProposalList
+          proposals={proposals}
+          currentUserId={currentUserId}
+          emptyLabel={
+            isAuthor
+              ? 'Никто пока не предложил правок для этой скважины.'
+              : 'Открытых предложений нет. Заметили опечатку — «Предложить правку» справа.'
+          }
+        />
       </section>
 
       <section className="mt-6 space-y-3">

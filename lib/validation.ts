@@ -194,3 +194,75 @@ export const measurementSchema = z.object({
 });
 
 export type MeasurementInput = z.infer<typeof measurementSchema>;
+
+// ============================================================================
+// Этап 5.3: предложения правок
+// ============================================================================
+
+// Whitelist полей, которые можно менять через предложение. Совпадает с
+// логикой fn_apply_edit_proposal в миграции 006 (там же — почему НЕ
+// разрешены координаты).
+const BOREHOLE_PROPOSAL_FIELDS = ['code', 'depth_m', 'soil_type', 'description'] as const;
+const OBSERVATION_POINT_PROPOSAL_FIELDS = ['code', 'point_type', 'description'] as const;
+
+const proposalReason = z
+  .string()
+  .trim()
+  .min(5, 'Опишите причину правки хотя бы в 5 символах')
+  .max(500, 'Слишком длинное пояснение — до 500 символов');
+
+const proposalStringField = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => (v == null ? undefined : String(v).trim()))
+  .transform((v) => (v === '' ? '' : v));
+
+export const editProposalSchema = z
+  .object({
+    targetTable: z.enum(['boreholes', 'observation_points']),
+    targetId: z.string().uuid('Некорректный идентификатор объекта'),
+    polygonId: z.string().uuid('Некорректный идентификатор участка'),
+    reason: proposalReason,
+    // Все whitelisted поля — необязательные строки. На сервере
+    // отфильтруем пустые (пользователь не хочет менять) и передадим в
+    // proposed_data то, что осталось. Формат — flat JSON, потому что
+    // fn_apply_edit_proposal читает JSONB по ключам.
+    code: proposalStringField.optional(),
+    depth_m: proposalStringField.optional(),
+    soil_type: proposalStringField.optional(),
+    point_type: proposalStringField.optional(),
+    description: proposalStringField.optional(),
+  })
+  .refine(
+    (v) => {
+      // Хотя бы одно поле должно быть заполнено.
+      const fields =
+        v.targetTable === 'boreholes'
+          ? BOREHOLE_PROPOSAL_FIELDS
+          : OBSERVATION_POINT_PROPOSAL_FIELDS;
+      return fields.some((f) => {
+        const value = (v as Record<string, string | undefined>)[f];
+        return value !== undefined && value !== '';
+      });
+    },
+    { message: 'Заполните хотя бы одно поле, которое хотите изменить' },
+  );
+
+export type EditProposalInput = z.infer<typeof editProposalSchema>;
+
+// Извлекает only-whitelist поля из валидированного input в JSONB для
+// колонки proposed_data. Пустые строки означают «очистить поле»
+// (см. fn_apply_edit_proposal: NULLIF(..., '')).
+export function proposalDataFromInput(
+  input: EditProposalInput,
+): Record<string, string> {
+  const fields =
+    input.targetTable === 'boreholes'
+      ? BOREHOLE_PROPOSAL_FIELDS
+      : OBSERVATION_POINT_PROPOSAL_FIELDS;
+  const out: Record<string, string> = {};
+  for (const f of fields) {
+    const value = (input as Record<string, string | undefined>)[f];
+    if (value !== undefined) out[f] = value;
+  }
+  return out;
+}

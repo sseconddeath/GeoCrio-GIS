@@ -196,6 +196,31 @@ export type AuditLogRow = {
   created_at: string;
 }
 
+// Этап 5.3: предложения правок.
+export type EditProposalStatus = 'pending' | 'accepted' | 'rejected' | 'applied' | 'withdrawn';
+
+export type EditProposalRow = {
+  id: string;
+  target_table: 'boreholes' | 'observation_points';
+  target_id: string;
+  polygon_id: string;
+  proposed_by: string | null;
+  reason: string;
+  proposed_data: Record<string, string>;
+  status: EditProposalStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EditProposalVoteRow = {
+  proposal_id: string;
+  voter_id: string;
+  created_at: string;
+}
+
 export type MapObjectRow = {
   id: string;
   name: string;
@@ -375,6 +400,25 @@ export interface Database {
         AuditLogRow,
         Optional<AuditLogRow, 'id' | 'user_id' | 'device_id' | 'old_data' | 'new_data' | 'created_at'>,
         Partial<Omit<AuditLogRow, 'id'>>
+      >;
+      edit_proposals: TableDef<
+        EditProposalRow,
+        Optional<
+          EditProposalRow,
+          | 'id'
+          | 'status'
+          | 'decided_by'
+          | 'decided_at'
+          | 'decision_note'
+          | 'created_at'
+          | 'updated_at'
+        >,
+        Partial<Omit<EditProposalRow, 'id'>>
+      >;
+      edit_proposal_votes: TableDef<
+        EditProposalVoteRow,
+        Optional<EditProposalVoteRow, 'created_at'>,
+        Partial<EditProposalVoteRow>
       >;
     };
     Views: {

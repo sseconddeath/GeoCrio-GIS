@@ -3,6 +3,7 @@ import { createClient } from './server';
 import type {
   BoreholeRow,
   BoreholeTemperatureProfileRow,
+  EditProposalRow,
   MapObjectRow,
   MeasurementRow,
   ObservationPointRow,
@@ -476,4 +477,174 @@ export async function listObjectHistory(
   } as never);
   if (error) return [];
   return (data as ObjectHistoryEntry[]) ?? [];
+}
+
+// ============================================================================
+// Предложения правок (Этап 5.3)
+// ============================================================================
+
+export interface EditProposalWithMeta extends EditProposalRow {
+  proposer_name: string | null;
+  votes_count: number;
+  my_vote: boolean;
+  can_decide: boolean; // текущий пользователь = автор объекта или админ
+  target_code: string | null;
+}
+
+// Читаем pending-предложения для объекта. Использует RLS: невидимые
+// предложения (чужой приватный полигон) не вернутся.
+export async function listPendingProposalsForObject(
+  targetTable: 'boreholes' | 'observation_points',
+  targetId: string,
+): Promise<EditProposalWithMeta[]> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data: rawRows } = await supabase
+    .from('edit_proposals')
+    .select('*')
+    .eq('target_table', targetTable)
+    .eq('target_id', targetId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+  const rows = (rawRows as EditProposalRow[] | null) ?? [];
+  if (rows.length === 0) return [];
+
+  return enrichProposals(rows, user?.id ?? null);
+}
+
+// Инбокс: 1) чужие pending-предложения по МОИМ объектам (мне решать);
+//         2) мои собственные pending (я их автор — могу отзывать).
+// Один запрос по target_id-ам моих объектов + один запрос по своим
+// proposed_by. Простое объединение.
+export async function listMyInbox(): Promise<{
+  incoming: EditProposalWithMeta[];
+  outgoing: EditProposalWithMeta[];
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { incoming: [], outgoing: [] };
+
+  const [myBoreholes, myPoints] = await Promise.all([
+    supabase.from('boreholes').select('id').eq('created_by', user.id).eq('is_deleted', false),
+    supabase
+      .from('observation_points')
+      .select('id')
+      .eq('created_by', user.id)
+      .eq('is_deleted', false),
+  ]);
+  const myBoreholeIds = ((myBoreholes.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  const myPointIds = ((myPoints.data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+
+  // Оба запроса делаем всегда, но с `in()` пустого массива Supabase
+  // возвращает пусто без ошибки.
+  const [incomingBoreholesRes, incomingPointsRes, outgoingRes] = await Promise.all([
+    myBoreholeIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('*')
+          .eq('target_table', 'boreholes')
+          .in('target_id', myBoreholeIds)
+          .eq('status', 'pending')
+      : Promise.resolve({ data: [] as EditProposalRow[] }),
+    myPointIds.length > 0
+      ? supabase
+          .from('edit_proposals')
+          .select('*')
+          .eq('target_table', 'observation_points')
+          .in('target_id', myPointIds)
+          .eq('status', 'pending')
+      : Promise.resolve({ data: [] as EditProposalRow[] }),
+    supabase
+      .from('edit_proposals')
+      .select('*')
+      .eq('proposed_by', user.id)
+      .eq('status', 'pending'),
+  ]);
+
+  const incomingRaw = [
+    ...(((incomingBoreholesRes as { data: EditProposalRow[] | null }).data) ?? []),
+    ...(((incomingPointsRes as { data: EditProposalRow[] | null }).data) ?? []),
+  ];
+  incomingRaw.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+  const outgoingRaw = ((outgoingRes.data as EditProposalRow[] | null) ?? [])
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+  const [incoming, outgoing] = await Promise.all([
+    enrichProposals(incomingRaw, user.id),
+    enrichProposals(outgoingRaw, user.id),
+  ]);
+
+  return { incoming, outgoing };
+}
+
+// Один общий helper: подкачивает имена проповедавших, коды объектов,
+// голоса. Считается локально в Node — по 3 запроса всего.
+async function enrichProposals(
+  rows: EditProposalRow[],
+  currentUserId: string | null,
+): Promise<EditProposalWithMeta[]> {
+  if (rows.length === 0) return [];
+  const supabase = await createClient();
+
+  const proposerIds = Array.from(new Set(rows.map((r) => r.proposed_by).filter(Boolean))) as string[];
+  const boreholeIds = Array.from(new Set(rows.filter((r) => r.target_table === 'boreholes').map((r) => r.target_id)));
+  const pointIds = Array.from(new Set(rows.filter((r) => r.target_table === 'observation_points').map((r) => r.target_id)));
+  const proposalIds = rows.map((r) => r.id);
+
+  const [profilesRes, boreholesRes, pointsRes, votesRes] = await Promise.all([
+    proposerIds.length > 0
+      ? supabase.from('profiles').select('id, full_name').in('id', proposerIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string }> }),
+    boreholeIds.length > 0
+      ? supabase.from('boreholes').select('id, code, created_by').in('id', boreholeIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; code: string; created_by: string | null }> }),
+    pointIds.length > 0
+      ? supabase.from('observation_points').select('id, code, created_by').in('id', pointIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; code: string; created_by: string | null }> }),
+    supabase.from('edit_proposal_votes').select('proposal_id, voter_id').in('proposal_id', proposalIds),
+  ]);
+
+  type Profile = { id: string; full_name: string };
+  type ObjMeta = { id: string; code: string; created_by: string | null };
+  type Vote = { proposal_id: string; voter_id: string };
+
+  const profileNameById = new Map<string, string>(
+    ((profilesRes.data as Profile[] | null) ?? []).map((p) => [p.id, p.full_name]),
+  );
+  const boreholeById = new Map<string, ObjMeta>(
+    ((boreholesRes.data as ObjMeta[] | null) ?? []).map((b) => [b.id, b]),
+  );
+  const pointById = new Map<string, ObjMeta>(
+    ((pointsRes.data as ObjMeta[] | null) ?? []).map((p) => [p.id, p]),
+  );
+  const votesByProposal = new Map<string, Vote[]>();
+  for (const v of ((votesRes.data as Vote[] | null) ?? [])) {
+    const list = votesByProposal.get(v.proposal_id) ?? [];
+    list.push(v);
+    votesByProposal.set(v.proposal_id, list);
+  }
+
+  return rows.map((row) => {
+    const votes = votesByProposal.get(row.id) ?? [];
+    const target =
+      row.target_table === 'boreholes'
+        ? boreholeById.get(row.target_id)
+        : pointById.get(row.target_id);
+    return {
+      ...row,
+      proposer_name: row.proposed_by ? profileNameById.get(row.proposed_by) ?? null : null,
+      votes_count: votes.length,
+      my_vote: currentUserId
+        ? votes.some((v) => v.voter_id === currentUserId)
+        : false,
+      can_decide: !!(currentUserId && target?.created_by === currentUserId),
+      target_code: target?.code ?? null,
+    };
+  });
 }

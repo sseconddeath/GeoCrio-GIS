@@ -4,14 +4,18 @@ import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
 import { ObjectHistory } from '@/components/history/ObjectHistory';
 import { PhotoGallery } from '@/components/photos/PhotoGallery';
 import { PhotoUploader } from '@/components/photos/PhotoUploader';
+import { ProposalList } from '@/components/proposals/ProposalList';
+import { ProposeEditForm } from '@/components/proposals/ProposeEditForm';
 import { POINT_TYPE_LABELS } from '@/lib/constants';
 import {
   canWritePolygon,
   getObservationPointFeature,
   getProfileById,
   listObjectHistory,
+  listPendingProposalsForObject,
   listPhotosForParent,
 } from '@/lib/supabase/queries';
+import { createClient } from '@/lib/supabase/server';
 import { softDeleteObservationPointAction } from '../actions';
 
 export default async function ObservationPointPage({
@@ -25,11 +29,19 @@ export default async function ObservationPointPage({
 
   const p = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
-  const [author, canEdit, photos, history] = await Promise.all([
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const currentUserId = user?.id ?? null;
+  const isAuthor = currentUserId !== null && p.created_by === currentUserId;
+
+  const [author, canEdit, photos, history, proposals] = await Promise.all([
     getProfileById(p.created_by),
     canWritePolygon(p.polygon_id),
     listPhotosForParent({ kind: 'observation_point', id }),
     listObjectHistory('observation_points', id),
+    listPendingProposalsForObject('observation_points', id),
   ]);
   const deleteAction = softDeleteObservationPointAction.bind(null, id);
 
@@ -86,6 +98,33 @@ export default async function ObservationPointPage({
         <h2 className="text-lg font-semibold text-gray-900">Фото</h2>
         <PhotoGallery photos={photos} parent={{ kind: 'observation_point', id }} canEdit={canEdit} />
         {canEdit ? <PhotoUploader parent={{ kind: 'observation_point', id }} /> : null}
+      </section>
+
+      <section className="mt-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Предложения правок</h2>
+          {!isAuthor && currentUserId ? (
+            <ProposeEditForm
+              targetTable="observation_points"
+              targetId={id}
+              polygonId={p.polygon_id}
+              current={{
+                code: p.code,
+                point_type: p.point_type,
+                description: p.description,
+              }}
+            />
+          ) : null}
+        </div>
+        <ProposalList
+          proposals={proposals}
+          currentUserId={currentUserId}
+          emptyLabel={
+            isAuthor
+              ? 'Никто пока не предложил правок для этой точки.'
+              : 'Открытых предложений нет. Заметили ошибку — «Предложить правку» справа.'
+          }
+        />
       </section>
 
       <section className="mt-6 space-y-3">
