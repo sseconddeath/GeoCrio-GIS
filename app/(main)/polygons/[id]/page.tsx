@@ -91,6 +91,27 @@ export default async function PolygonOverviewPage({
           </Link>
         ) : null}
       </div>
+
+      <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
+        <div className="text-sm font-medium text-gray-900">Экспорт данных</div>
+        <p className="mt-1 text-xs text-gray-500">
+          Скачайте объекты участка в формате CSV (для Excel) или GeoJSON (для QGIS / ArcGIS).
+        </p>
+        <div className="mt-3 flex gap-2">
+          <a
+            href={`/api/export?polygon=${polygon.id}&format=csv`}
+            className="inline-flex min-h-[36px] items-center justify-center rounded-md border border-gray-300 px-4 text-sm text-header hover:bg-gray-50"
+          >
+            Скачать CSV
+          </a>
+          <a
+            href={`/api/export?polygon=${polygon.id}&format=geojson`}
+            className="inline-flex min-h-[36px] items-center justify-center rounded-md border border-gray-300 px-4 text-sm text-header hover:bg-gray-50"
+          >
+            Скачать GeoJSON
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

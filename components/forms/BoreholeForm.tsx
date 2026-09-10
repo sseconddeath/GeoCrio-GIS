@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { CoordInput } from '@/components/ui/CoordInput';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -52,26 +53,14 @@ export function BoreholeForm({ polygonId, initialLng, initialLat, borehole, onCa
         error={state.fieldErrors?.code}
       />
 
-      <div className="grid grid-cols-2 gap-3">
-        <Input
-          label="Долгота"
-          name="lng"
-          type="number"
-          step="any"
-          required
-          defaultValue={borehole?.lng ?? initialLng}
-          error={state.fieldErrors?.lng}
-        />
-        <Input
-          label="Широта"
-          name="lat"
-          type="number"
-          step="any"
-          required
-          defaultValue={borehole?.lat ?? initialLat}
-          error={state.fieldErrors?.lat}
-        />
-      </div>
+      <CoordInput
+        latName="lat"
+        lngName="lng"
+        initialLat={borehole?.lat ?? initialLat}
+        initialLng={borehole?.lng ?? initialLng}
+        latError={state.fieldErrors?.lat}
+        lngError={state.fieldErrors?.lng}
+      />
 
       <Input
         label="Глубина, м"

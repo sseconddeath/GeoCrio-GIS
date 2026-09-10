@@ -40,7 +40,7 @@ export function Popup({ feature, onClose, onEdit, canEdit }: PopupProps) {
           className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           aria-label="Закрыть"
         >
-          ✕
+          X
         </button>
       </div>
 

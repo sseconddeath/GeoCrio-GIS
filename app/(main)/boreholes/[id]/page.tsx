@@ -1,11 +1,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
+import { PhotoGallery } from '@/components/photos/PhotoGallery';
+import { PhotoUploader } from '@/components/photos/PhotoUploader';
 import { PERMAFROST_LABELS, SOIL_TYPE_LABELS } from '@/lib/constants';
 import {
   canWritePolygon,
   getBoreholeFeature,
   getProfileById,
+  listPhotosForParent,
 } from '@/lib/supabase/queries';
 import { softDeleteBoreholeAction } from '../actions';
 
@@ -21,9 +24,10 @@ export default async function BoreholePage({
   const b = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
 
-  const [author, canEdit] = await Promise.all([
+  const [author, canEdit, photos] = await Promise.all([
     getProfileById(b.created_by),
     canWritePolygon(b.polygon_id),
+    listPhotosForParent({ kind: 'borehole', id }),
   ]);
 
   const deleteAction = softDeleteBoreholeAction.bind(null, id);
@@ -82,6 +86,11 @@ export default async function BoreholePage({
           </div>
         ) : null}
       </dl>
+
+      <div className="mt-6 space-y-4">
+        <PhotoGallery photos={photos} parent={{ kind: 'borehole', id }} canEdit={canEdit} />
+        {canEdit ? <PhotoUploader parent={{ kind: 'borehole', id }} /> : null}
+      </div>
 
       <div className="mt-6 rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
         <div className="mb-1 inline-block rounded-full bg-header/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-header">

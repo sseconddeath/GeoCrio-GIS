@@ -46,6 +46,9 @@ interface MapViewProps {
   onMapClick?: (lng: number, lat: number) => void;
   onFeatureClick?: (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => void;
   onCursorMove?: (lng: number, lat: number) => void;
+  // Центр карты меняется при движении — передаём наверх, чтобы FAB
+  // «+ Добавить» знал, куда ставить координаты по умолчанию.
+  onViewChange?: (lng: number, lat: number) => void;
 }
 
 export function MapView({
@@ -55,6 +58,7 @@ export function MapView({
   onMapClick,
   onFeatureClick,
   onCursorMove,
+  onViewChange,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -62,10 +66,12 @@ export function MapView({
   const onMapClickRef = useRef(onMapClick);
   const onFeatureClickRef = useRef(onFeatureClick);
   const onCursorMoveRef = useRef(onCursorMove);
+  const onViewChangeRef = useRef(onViewChange);
   useEffect(() => {
     onMapClickRef.current = onMapClick;
     onFeatureClickRef.current = onFeatureClick;
     onCursorMoveRef.current = onCursorMove;
+    onViewChangeRef.current = onViewChange;
   });
 
   // Init/destroy — только один раз за монтирование компонента.
@@ -237,6 +243,15 @@ export function MapView({
       map.on('mousemove', (e: MapMoveEv) => {
         onCursorMoveRef.current?.(e.lngLat.lng, e.lngLat.lat);
       });
+
+      // Центр карты — для FAB «+ Добавить». Эмиттим при загрузке и при
+      // каждой остановке движения (moveend).
+      const emitCenter = () => {
+        const c = map.getCenter();
+        onViewChangeRef.current?.(c.lng, c.lat);
+      };
+      emitCenter();
+      map.on('moveend', emitCenter);
     });
 
     return () => {

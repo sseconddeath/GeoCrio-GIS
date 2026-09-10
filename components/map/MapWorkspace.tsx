@@ -6,6 +6,7 @@ import { AddObjectPanel } from './AddObjectPanel';
 import { LayerPanel, type LayerVisibility } from './LayerPanel';
 import { MapView, type MapObjectProperties } from './MapView';
 import { Popup } from './Popup';
+import { RealtimeRefresh } from './RealtimeRefresh';
 import { SearchBox } from './SearchBox';
 
 interface MapWorkspaceProps {
@@ -13,8 +14,8 @@ interface MapWorkspaceProps {
   objects: GeoJSON.FeatureCollection<GeoJSON.Point, MapObjectProperties>;
   stats: PolygonStatsRow | null;
   // Может ли текущий пользователь править объекты этого полигона? (Автор,
-  // соавтор или админ.) Если нет — клик по свободному месту не открывает
-  // форму создания, а попап показывает только «Профиль» без «Редактировать».
+  // соавтор или админ.) Если нет — FAB «+ Добавить» скрыт, попап
+  // показывает только «Профиль» без «Редактировать».
   canWrite: boolean;
 }
 
@@ -29,6 +30,11 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
   >(null);
   const [addAt, setAddAt] = useState<{ lng: number; lat: number } | null>(null);
   const [cursor, setCursor] = useState<{ lng: number; lat: number } | null>(null);
+  const [viewCenter, setViewCenter] = useState<{ lng: number; lat: number }>({
+    lng: polygon.center_lng,
+    lat: polygon.center_lat,
+  });
+  const [showSidebar, setShowSidebar] = useState(false);
 
   const filteredObjects = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point, MapObjectProperties>>(
     () => ({
@@ -41,20 +47,10 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
     [objects, visibility.boreholes, visibility.observationPoints],
   );
 
-  const [showSidebar, setShowSidebar] = useState(false);
-
-  const handleMapClick = useCallback(
-    (lng: number, lat: number) => {
-      if (!canWrite) return;
-      setSelectedFeature(null);
-      setAddAt({ lng, lat });
-      // На мобилке — сразу прячем панель слоёв, чтобы форма создания
-      // открывалась поверх свободной карты.
-      setShowSidebar(false);
-    },
-    [canWrite],
-  );
-
+  // Клик по свободному месту карты больше НЕ открывает форму — иначе на
+  // мобилке случайный тап при попытке промотать вызывает панель добавления
+  // (проблема A4 в аудите). Теперь клик — только для попапа над маркерами;
+  // добавление объекта — через явный FAB «+».
   const handleFeatureClick = useCallback(
     (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => {
       setAddAt(null);
@@ -64,8 +60,15 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
     [],
   );
 
+  const openAddPanel = () => {
+    setSelectedFeature(null);
+    setAddAt(viewCenter);
+    setShowSidebar(false);
+  };
+
   return (
     <div className="relative flex h-[calc(100vh-4rem)] w-full">
+      <RealtimeRefresh polygonId={polygon.id} />
       {/* Sidebar — 240px на десктопе, оверлей на планшете/мобилке. */}
       <aside
         className={`${
@@ -84,7 +87,7 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
       <button
         type="button"
         onClick={() => setShowSidebar((v) => !v)}
-        className="absolute bottom-20 left-4 z-10 rounded-full border border-gray-300 bg-white px-3 py-2 text-xs font-medium shadow-md lg:hidden"
+        className="absolute bottom-24 left-4 z-10 rounded-full border border-gray-300 bg-white px-3 py-2 text-xs font-medium shadow-md lg:hidden"
       >
         {showSidebar ? 'Скрыть слои' : 'Слои'}
       </button>
@@ -94,15 +97,30 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           polygon={polygon}
           objects={filteredObjects}
           showPolygonBoundary={visibility.polygonBoundary}
-          onMapClick={handleMapClick}
           onFeatureClick={handleFeatureClick}
           onCursorMove={(lng, lat) => setCursor({ lng, lat })}
+          onViewChange={(lng, lat) => setViewCenter({ lng, lat })}
         />
 
         <SearchBox
           features={filteredObjects.features}
           onSelect={handleFeatureClick}
         />
+
+        {/* FAB «+ Добавить» — только для команды участка. Позиция:
+            правый нижний угол, над MobileNav (bottom-24 = 6rem, чтобы не
+            перекрываться нижней навигацией мобилы). */}
+        {canWrite && !addAt ? (
+          <button
+            type="button"
+            onClick={openAddPanel}
+            className="absolute bottom-24 right-4 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-header text-2xl font-light text-white shadow-lg hover:bg-header/90 md:bottom-6"
+            aria-label="Добавить объект"
+            title="Добавить скважину или точку наблюдения"
+          >
+            +
+          </button>
+        ) : null}
 
         {selectedFeature ? (
           <Popup
@@ -134,9 +152,9 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           </div>
         ) : null}
 
-        {/* Координаты курсора */}
+        {/* Координаты курсора — только на десктопе (у мобилки нет мыши). */}
         {cursor ? (
-          <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-white/80 px-2 py-1 font-mono text-xs text-gray-600 shadow">
+          <div className="pointer-events-none absolute bottom-2 right-2 hidden rounded bg-white/80 px-2 py-1 font-mono text-xs text-gray-600 shadow md:block">
             {cursor.lat.toFixed(5)}, {cursor.lng.toFixed(5)}
           </div>
         ) : null}

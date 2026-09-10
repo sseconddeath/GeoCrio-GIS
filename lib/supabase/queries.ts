@@ -249,3 +249,71 @@ export async function getProfileById(
     .maybeSingle();
   return data as Pick<ProfileRow, 'id' | 'full_name'> | null;
 }
+
+// ============================================================================
+// Фото
+// ============================================================================
+
+export interface PhotoWithUrls {
+  id: string;
+  caption: string | null;
+  taken_at: string | null;
+  width_px: number | null;
+  height_px: number | null;
+  file_size_kb: number | null;
+  thumbUrl: string | null;
+  fullUrl: string | null;
+}
+
+// Список фото объекта + signed URLs (bucket photos приватный).
+// TTL signed URL — 1 час, за это время пользователь успевает просмотреть
+// галерею и открыть фото полноразмерно.
+export async function listPhotosForParent(
+  parent: { kind: 'borehole' | 'observation_point'; id: string },
+): Promise<PhotoWithUrls[]> {
+  const supabase = await createClient();
+  const key = parent.kind === 'borehole' ? 'borehole_id' : 'observation_point_id';
+  const { data } = await supabase
+    .from('photos')
+    .select('id, caption, taken_at, width_px, height_px, file_size_kb, storage_path, thumbnail_path')
+    .eq(key, parent.id)
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: false });
+  const rows = (data as Array<{
+    id: string;
+    caption: string | null;
+    taken_at: string | null;
+    width_px: number | null;
+    height_px: number | null;
+    file_size_kb: number | null;
+    storage_path: string;
+    thumbnail_path: string | null;
+  }> | null) ?? [];
+  if (rows.length === 0) return [];
+
+  const [fullSigned, thumbSigned] = await Promise.all([
+    supabase.storage.from('photos').createSignedUrls(rows.map((r) => r.storage_path), 3600),
+    supabase.storage
+      .from('thumbnails')
+      .createSignedUrls(rows.map((r) => r.thumbnail_path ?? r.storage_path), 3600),
+  ]);
+  const fullMap = new Map<string, string>();
+  fullSigned.data?.forEach((s) => {
+    if (s.path && s.signedUrl) fullMap.set(s.path, s.signedUrl);
+  });
+  const thumbMap = new Map<string, string>();
+  thumbSigned.data?.forEach((s) => {
+    if (s.path && s.signedUrl) thumbMap.set(s.path, s.signedUrl);
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    caption: r.caption,
+    taken_at: r.taken_at,
+    width_px: r.width_px,
+    height_px: r.height_px,
+    file_size_kb: r.file_size_kb,
+    fullUrl: fullMap.get(r.storage_path) ?? null,
+    thumbUrl: r.thumbnail_path ? thumbMap.get(r.thumbnail_path) ?? null : null,
+  }));
+}

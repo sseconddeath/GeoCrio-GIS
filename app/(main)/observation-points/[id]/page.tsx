@@ -1,11 +1,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
+import { PhotoGallery } from '@/components/photos/PhotoGallery';
+import { PhotoUploader } from '@/components/photos/PhotoUploader';
 import { POINT_TYPE_LABELS } from '@/lib/constants';
 import {
   canWritePolygon,
   getObservationPointFeature,
   getProfileById,
+  listPhotosForParent,
 } from '@/lib/supabase/queries';
 import { softDeleteObservationPointAction } from '../actions';
 
@@ -20,9 +23,10 @@ export default async function ObservationPointPage({
 
   const p = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
-  const [author, canEdit] = await Promise.all([
+  const [author, canEdit, photos] = await Promise.all([
     getProfileById(p.created_by),
     canWritePolygon(p.polygon_id),
+    listPhotosForParent({ kind: 'observation_point', id }),
   ]);
   const deleteAction = softDeleteObservationPointAction.bind(null, id);
 
@@ -74,6 +78,11 @@ export default async function ObservationPointPage({
           </div>
         ) : null}
       </dl>
+
+      <div className="mt-6 space-y-4">
+        <PhotoGallery photos={photos} parent={{ kind: 'observation_point', id }} canEdit={canEdit} />
+        {canEdit ? <PhotoUploader parent={{ kind: 'observation_point', id }} /> : null}
+      </div>
 
       {canEdit ? (
         <div className="mt-6 flex gap-3">

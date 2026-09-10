@@ -18,7 +18,20 @@ export function AddObjectPanel({ polygonId, lng, lat, onClose }: AddObjectPanelP
   const [kind, setKind] = useState<'borehole' | 'observation_point'>('borehole');
 
   return (
-    <div className="absolute right-4 top-4 z-10 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-lg">
+    // На мобилке — bottom-sheet: занимает низ экрана, сверху остаётся видна
+    // часть карты. На десктопе (md+) — плавающая панель справа сверху.
+    <div
+      className="
+        absolute z-20 flex flex-col overflow-hidden border border-gray-200 bg-white shadow-lg
+        inset-x-0 bottom-0 max-h-[75vh] rounded-t-2xl
+        md:inset-auto md:right-4 md:top-4 md:bottom-auto md:w-96 md:max-h-[calc(100vh-6rem)] md:max-w-[calc(100vw-2rem)] md:rounded-lg
+      "
+    >
+      {/* «Ушко» для свайпа — визуальный маркер bottom-sheet, только на
+          мобилке. */}
+      <div className="flex h-3 items-center justify-center md:hidden" aria-hidden>
+        <div className="h-1 w-10 rounded-full bg-gray-300" />
+      </div>
       <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
         <div className="text-sm font-semibold text-gray-900">Добавить объект</div>
         <button
@@ -27,7 +40,7 @@ export function AddObjectPanel({ polygonId, lng, lat, onClose }: AddObjectPanelP
           className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           aria-label="Закрыть"
         >
-          ✕
+          X
         </button>
       </div>
 
@@ -56,7 +69,7 @@ export function AddObjectPanel({ polygonId, lng, lat, onClose }: AddObjectPanelP
         </button>
       </div>
 
-      <div className="px-4 py-4">
+      <div className="overflow-y-auto px-4 py-4">
         {kind === 'borehole' ? (
           <BoreholeForm polygonId={polygonId} initialLng={lng} initialLat={lat} onCancel={onClose} />
         ) : (
