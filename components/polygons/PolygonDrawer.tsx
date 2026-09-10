@@ -46,6 +46,16 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
 export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  // Собственный флаг готовности: isStyleLoaded() возвращает false пока
+  // грузятся тайлы OSM, а once('load', ...) после уже отгремевшего load
+  // молчит навсегда — из-за этой пары точки копились в state, но не
+  // рисовались. Ref флипается в true в load-обработчике сразу после
+  // addSource/addLayer, и sync-эффект просто ждёт, пока он не станет true.
+  const mapReadyRef = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
+  // Актуальные closed/onChange для click-хендлера — регистрируем on('click')
+  // один раз в load-хендлере, поэтому обычные state/props оттуда не видны.
+  const closedRef = useRef(false);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -152,16 +162,19 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       // Один клик по карте = одна вершина. Игнорируем клик, когда полигон
       // уже замкнут (иначе пользователь начал бы добавлять «висящие»
       // точки к готовому). Если хочет — сначала жмёт «Начать заново».
+      // Читаем closed через ref, потому что обработчик регистрируется
+      // один раз и state здесь был бы вечно false.
       map.on('click', (e) => {
-        setClosed((wasClosed) => {
-          if (wasClosed) return wasClosed;
-          setPoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
-          return wasClosed;
-        });
+        if (closedRef.current) return;
+        setPoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
       });
 
       // Курсор pointer над картой — подсказка что клик что-то делает.
       map.getCanvas().style.cursor = 'crosshair';
+
+      // Всё готово — sync-эффект теперь может пушить данные в источники.
+      mapReadyRef.current = true;
+      setMapReady(true);
     });
 
     return () => {
@@ -172,56 +185,58 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Синхронизация точек/полигона с MapLibre. Пересчитываем на каждый
-  // change без пересоздания карты.
+  // Синхронизация closed с ref — читается из click-хендлера.
+  useEffect(() => {
+    closedRef.current = closed;
+  }, [closed]);
+
+  // Синхронизация точек/полигона с MapLibre. Ждём mapReady — иначе
+  // источники и слои ещё не созданы. При каждом изменении points/closed
+  // пере-setData'им, без пересоздания карты.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    const apply = () => {
-      const pointsSrc = map.getSource('drawer-points') as maplibregl.GeoJSONSource | undefined;
-      const lineSrc = map.getSource('drawer-line') as maplibregl.GeoJSONSource | undefined;
-      const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
-      if (!pointsSrc || !lineSrc || !polySrc) return;
+    if (!map || !mapReady) return;
+    const pointsSrc = map.getSource('drawer-points') as maplibregl.GeoJSONSource | undefined;
+    const lineSrc = map.getSource('drawer-line') as maplibregl.GeoJSONSource | undefined;
+    const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
+    if (!pointsSrc || !lineSrc || !polySrc) return;
 
-      pointsSrc.setData({
-        type: 'FeatureCollection',
-        features: points.map((p, i) => ({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: p },
-          properties: { index: i },
-        })),
+    pointsSrc.setData({
+      type: 'FeatureCollection',
+      features: points.map((p, i) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: p },
+        properties: { index: i },
+      })),
+    });
+
+    if (closed && points.length >= 3) {
+      // Замкнутый полигон = заливка + контур; preview-линию гасим.
+      polySrc.setData({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
+        properties: {},
       });
-
-      if (closed && points.length >= 3) {
-        // Замкнутый полигон = заливка + контур; preview-линию гасим.
-        polySrc.setData({
-          type: 'Feature',
-          geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
-          properties: {},
-        });
-        lineSrc.setData({ type: 'FeatureCollection', features: [] });
-        onChangeRef.current({
-          type: 'Polygon',
-          coordinates: [[...points, points[0]]],
-        });
-      } else if (points.length >= 2) {
-        // Незамкнутая ломаная — сплошная линия по расставленным точкам.
-        polySrc.setData({ type: 'FeatureCollection', features: [] });
-        lineSrc.setData({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: points },
-          properties: {},
-        });
-        onChangeRef.current(null);
-      } else {
-        polySrc.setData({ type: 'FeatureCollection', features: [] });
-        lineSrc.setData({ type: 'FeatureCollection', features: [] });
-        onChangeRef.current(null);
-      }
-    };
-    if (map.isStyleLoaded()) apply();
-    else map.once('load', apply);
-  }, [points, closed]);
+      lineSrc.setData({ type: 'FeatureCollection', features: [] });
+      onChangeRef.current({
+        type: 'Polygon',
+        coordinates: [[...points, points[0]]],
+      });
+    } else if (points.length >= 2) {
+      // Незамкнутая ломаная — сплошная линия по расставленным точкам.
+      polySrc.setData({ type: 'FeatureCollection', features: [] });
+      lineSrc.setData({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: points },
+        properties: {},
+      });
+      onChangeRef.current(null);
+    } else {
+      polySrc.setData({ type: 'FeatureCollection', features: [] });
+      lineSrc.setData({ type: 'FeatureCollection', features: [] });
+      onChangeRef.current(null);
+    }
+  }, [points, closed, mapReady]);
 
   const canClose = points.length >= 3 && !closed;
   const canUndo = points.length > 0 && !closed;
