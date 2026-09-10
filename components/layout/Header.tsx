@@ -1,5 +1,6 @@
 import { signOutAction } from '@/app/(auth)/actions';
 import { PolygonSwitcher } from '@/components/polygons/PolygonSwitcher';
+import { SyncStatus } from '@/components/pwa/SyncStatus';
 import { Button } from '@/components/ui/Button';
 import { displayRole, type UserRole } from '@/lib/constants';
 import {
@@ -35,6 +36,7 @@ export async function Header({ fullName, role }: HeaderProps) {
         </div>
       </div>
       <div className="flex min-w-0 items-center gap-3">
+        <SyncStatus />
         <PolygonSwitcher
           myPolygons={myPolygons.map((p) => ({ id: p.id, name: p.name, is_public: p.is_public }))}
           sharedPolygons={sharedPolygons.map((p) => ({

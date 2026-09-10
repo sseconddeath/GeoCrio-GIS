@@ -116,3 +116,75 @@ export async function restoreBoreholeAction(id: string): Promise<void> {
   revalidatePath('/data');
   revalidatePath(`/boreholes/${id}`);
 }
+
+// Queue-friendly версии: те же вставки/обновления, но принимают plain
+// object (не FormData) и не редиректят — чтобы клиентский drainQueue
+// мог вызывать их последовательно и получать простой {ok/error}.
+// Валидация та же — payload из очереди могло сгенерировать что угодно.
+
+export interface BoreholeQueueInput {
+  polygonId: string;
+  code: string;
+  lng: number;
+  lat: number;
+  depth_m?: number | null;
+  soil_type?: string | null;
+  description?: string | null;
+}
+
+export async function createBoreholeFromQueue(
+  input: BoreholeQueueInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = boreholeSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { ok: false, error: `${String(first.path[0] ?? '')}: ${first.message}` };
+  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Требуется вход в систему' };
+
+  const { polygonId, code, lng, lat, depth_m, soil_type, description } = parsed.data;
+  const { error } = await supabase.from('boreholes').insert({
+    polygon_id: polygonId,
+    code,
+    location: formatPointEWKT(lng, lat),
+    depth_m,
+    soil_type,
+    description,
+    created_by: user.id,
+  });
+  if (error) return { ok: false, error: translateDbError(error) };
+  revalidatePath('/map');
+  revalidatePath('/data');
+  return { ok: true };
+}
+
+export async function updateBoreholeFromQueue(
+  id: string,
+  input: BoreholeQueueInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = boreholeSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { ok: false, error: `${String(first.path[0] ?? '')}: ${first.message}` };
+  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Требуется вход в систему' };
+
+  const { code, lng, lat, depth_m, soil_type, description } = parsed.data;
+  const { error } = await supabase
+    .from('boreholes')
+    .update({ code, location: formatPointEWKT(lng, lat), depth_m, soil_type, description })
+    .eq('id', id);
+  if (error) return { ok: false, error: translateDbError(error) };
+  revalidatePath('/map');
+  revalidatePath('/data');
+  revalidatePath(`/boreholes/${id}`);
+  return { ok: true };
+}

@@ -1,17 +1,21 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useActionState, useTransition } from 'react';
+import { useOffline } from 'next/offline';
 import { Button } from '@/components/ui/Button';
 import { CoordInput } from '@/components/ui/CoordInput';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { POINT_TYPE_LABELS } from '@/lib/constants';
+import { drain, enqueue } from '@/lib/offline/queue';
 import type { ObservationPointRow } from '@/lib/supabase/types';
 import {
   createObservationPointAction,
   updateObservationPointAction,
   type ObservationPointActionState,
+  type ObservationPointQueueInput,
 } from '@/app/(main)/observation-points/actions';
 
 const POINT_TYPE_OPTIONS = (Object.keys(POINT_TYPE_LABELS) as (keyof typeof POINT_TYPE_LABELS)[]).map(
@@ -40,11 +44,42 @@ export function ObservationPointForm({
     ? updateObservationPointAction.bind(null, point!.id)
     : createObservationPointAction;
   const [state, formAction] = useActionState(action, initialState);
+  const isOffline = useOffline();
+  const [offlineSaving, startOffline] = useTransition();
+  const router = useRouter();
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    if (!isOffline) return;
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload: ObservationPointQueueInput = {
+      polygonId,
+      code: String(fd.get('code') ?? '').trim(),
+      lat: Number(fd.get('lat')),
+      lng: Number(fd.get('lng')),
+      point_type: String(fd.get('point_type') ?? ''),
+      description: (fd.get('description') as string) || null,
+    };
+    startOffline(async () => {
+      await enqueue(
+        isEdit
+          ? { kind: 'observation_point:update', data: payload, targetId: point!.id }
+          : { kind: 'observation_point:create', data: payload },
+      );
+      drain().catch(() => {});
+      router.push(isEdit ? `/observation-points/${point!.id}` : '/map');
+    });
+  };
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form action={formAction} onSubmit={handleSubmit} className="flex flex-col gap-4">
       <input type="hidden" name="polygonId" value={polygonId} />
       <FormError message={state.error} />
+      {isOffline ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Нет связи. Точка сохранится локально и отправится, когда сеть вернётся.
+        </p>
+      ) : null}
 
       <Input
         label="Код точки"
@@ -89,8 +124,16 @@ export function ObservationPointForm({
       </div>
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit" className="flex-1">
-          {isEdit ? 'Сохранить' : 'Создать точку'}
+        <Button type="submit" className="flex-1" disabled={offlineSaving}>
+          {offlineSaving
+            ? 'Сохраняю локально…'
+            : isOffline
+              ? isEdit
+                ? 'Сохранить локально'
+                : 'Создать локально'
+              : isEdit
+                ? 'Сохранить'
+                : 'Создать точку'}
         </Button>
         {onCancel ? (
           <Button type="button" variant="secondary" onClick={onCancel}>
