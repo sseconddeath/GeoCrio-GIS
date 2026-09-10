@@ -60,9 +60,18 @@ export default async function DataPage({
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="border-b border-gray-200 bg-white px-6 py-4">
-        <h1 className="text-lg font-semibold text-gray-900">Данные участка</h1>
-        <p className="text-sm text-gray-500">{polygon.name}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-6 py-4">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">Данные участка</h1>
+          <p className="text-sm text-gray-500">{polygon.name}</p>
+        </div>
+        <Link
+          href="/trash"
+          className="text-sm text-header hover:underline"
+          title="Свои удалённые объекты"
+        >
+          Корзина
+        </Link>
       </div>
       <ObjectsTable boreholes={boreholes} points={points} />
     </div>

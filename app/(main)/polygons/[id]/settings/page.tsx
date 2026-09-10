@@ -76,7 +76,8 @@ export default async function PolygonSettingsPage({
           <SoftDeleteButton
             action={deleteAction}
             label="Удалить участок"
-            confirmText={`Удалить участок «${polygon.name}» вместе со всеми объектами? Это НЕЛЬЗЯ отменить.`}
+            title={`Удалить участок «${polygon.name}»?`}
+            description="Все скважины, точки наблюдений, замеры и фото этого участка будут удалены (мягко) и попадут в Корзину. Само определение участка удаляется без возможности восстановить — уверены?"
           />
         </div>
       </section>

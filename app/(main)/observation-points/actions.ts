@@ -108,16 +108,20 @@ export async function softDeleteObservationPointAction(id: string): Promise<void
   redirect('/map');
 }
 
-export async function restoreObservationPointAction(id: string): Promise<void> {
+export async function restoreObservationPointAction(
+  id: string,
+): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const { error } = await supabase
     .from('observation_points')
     .update({ is_deleted: false })
     .eq('id', id);
-  if (error) throw new Error(translateDbError(error));
+  if (error) return { ok: false, error: translateDbError(error) };
   revalidatePath('/map');
   revalidatePath('/data');
+  revalidatePath('/trash');
   revalidatePath(`/observation-points/${id}`);
+  return { ok: true };
 }
 
 // Queue-friendly версии (см. пояснение в boreholes/actions.ts).

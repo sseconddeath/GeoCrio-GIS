@@ -83,6 +83,22 @@ export async function softDeleteMeasurementAction(
   return { ok: true };
 }
 
+export async function restoreMeasurementAction(
+  id: string,
+  boreholeId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from('measurements')
+    .update({ is_deleted: false })
+    .eq('id', id);
+  if (error) return { ok: false, error: translateDbError(error) };
+  revalidatePath(`/boreholes/${boreholeId}`);
+  revalidatePath('/map');
+  revalidatePath('/trash');
+  return { ok: true };
+}
+
 // Queue-friendly версия для будущего офлайн-режима замеров (Этап 3.2c
 // или 4.1). Пока не подключена — оставлена для будущего использования.
 export async function createMeasurementFromQueue(

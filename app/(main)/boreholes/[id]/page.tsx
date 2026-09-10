@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
+import { ObjectHistory } from '@/components/history/ObjectHistory';
 import { MeasurementForm } from '@/components/measurements/MeasurementForm';
 import { MeasurementList } from '@/components/measurements/MeasurementList';
 import { TemperatureProfileChart } from '@/components/measurements/TemperatureProfileChart';
@@ -13,6 +14,7 @@ import {
   getBoreholeTemperatureProfile,
   getProfileById,
   listMeasurementsForBorehole,
+  listObjectHistory,
   listPhotosForParent,
 } from '@/lib/supabase/queries';
 import { softDeleteBoreholeAction } from '../actions';
@@ -29,12 +31,13 @@ export default async function BoreholePage({
   const b = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
 
-  const [author, canEdit, photos, measurements, profile] = await Promise.all([
+  const [author, canEdit, photos, measurements, profile, history] = await Promise.all([
     getProfileById(b.created_by),
     canWritePolygon(b.polygon_id),
     listPhotosForParent({ kind: 'borehole', id }),
     listMeasurementsForBorehole(id),
     getBoreholeTemperatureProfile(id),
+    listObjectHistory('boreholes', id),
   ]);
 
   const lastMeasurement = measurements[0] ?? null;
@@ -136,6 +139,20 @@ export default async function BoreholePage({
         {canEdit ? <PhotoUploader parent={{ kind: 'borehole', id }} /> : null}
       </section>
 
+      <section className="mt-6 space-y-3">
+        <h2 className="text-lg font-semibold text-gray-900">История изменений</h2>
+        <ObjectHistory
+          history={history}
+          displayFields={{
+            code: 'Код',
+            depth_m: 'Глубина, м',
+            soil_type: 'Тип грунта',
+            description: 'Описание',
+            is_deleted: 'Удалена',
+          }}
+        />
+      </section>
+
       {canEdit ? (
         <div className="mt-6 flex gap-3">
           <Link
@@ -144,7 +161,11 @@ export default async function BoreholePage({
           >
             Редактировать
           </Link>
-          <SoftDeleteButton action={deleteAction} />
+          <SoftDeleteButton
+            action={deleteAction}
+            title={`Удалить скважину ${b.code}?`}
+            description="Скважина и все её замеры и фото исчезнут с карты и списков. Восстановить можно в разделе «Корзина» в течение 30 дней."
+          />
         </div>
       ) : (
         <p className="mt-6 text-xs text-gray-500">

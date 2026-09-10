@@ -354,3 +354,126 @@ export async function getBoreholeTemperatureProfile(
     .order('depth_m', { ascending: true });
   return (data as BoreholeTemperatureProfileRow[]) ?? [];
 }
+
+// ============================================================================
+// Корзина (Этап 5.2)
+// ============================================================================
+
+export interface TrashItem {
+  kind: 'borehole' | 'observation_point' | 'measurement';
+  id: string;
+  code: string;
+  updated_at: string;
+  parentId?: string;
+  parentCode?: string;
+}
+
+// Свои удалённые объекты — скважины, точки, замеры (в замерах нет
+// created_by в чистом виде, идём через measured_by). Показываем всё,
+// что помечено is_deleted=true — на будущее автоочистка старше 30
+// дней (Этап 6, отдельный cron/edge). RLS фильтрует по полигону, так
+// что чужое не всплывёт.
+export async function listMyTrash(): Promise<TrashItem[]> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const [boreholes, points, measurements] = await Promise.all([
+    supabase
+      .from('boreholes')
+      .select('id, code, updated_at')
+      .eq('is_deleted', true)
+      .eq('created_by', user.id)
+      .order('updated_at', { ascending: false }),
+    supabase
+      .from('observation_points')
+      .select('id, code, updated_at')
+      .eq('is_deleted', true)
+      .eq('created_by', user.id)
+      .order('updated_at', { ascending: false }),
+    supabase
+      .from('measurements')
+      .select('id, depth_m, temperature_c, borehole_id, created_at')
+      .eq('is_deleted', true)
+      .eq('measured_by', user.id)
+      .order('created_at', { ascending: false }),
+  ]);
+
+  const items: TrashItem[] = [];
+  for (const b of ((boreholes.data as Array<{ id: string; code: string; updated_at: string }> | null) ?? [])) {
+    items.push({ kind: 'borehole', id: b.id, code: b.code, updated_at: b.updated_at });
+  }
+  for (const p of ((points.data as Array<{ id: string; code: string; updated_at: string }> | null) ?? [])) {
+    items.push({ kind: 'observation_point', id: p.id, code: p.code, updated_at: p.updated_at });
+  }
+
+  // Для замеров подтягиваем код скважины отдельным запросом (один IN),
+  // чтобы в списке было понятно «замер −1.2 °C @ 3 м из скважины Скв-01».
+  type MeasurementTrashRow = {
+    id: string;
+    depth_m: number;
+    temperature_c: number;
+    borehole_id: string;
+    created_at: string;
+  };
+  const measRows = ((measurements.data as MeasurementTrashRow[] | null) ?? []);
+  const boreholeIds = Array.from(new Set(measRows.map((m) => m.borehole_id)));
+  const boreholeCodes = new Map<string, string>();
+  if (boreholeIds.length > 0) {
+    const { data } = await supabase.from('boreholes').select('id, code').in('id', boreholeIds);
+    for (const b of ((data as Array<{ id: string; code: string }> | null) ?? [])) {
+      boreholeCodes.set(b.id, b.code);
+    }
+  }
+  for (const m of measRows) {
+    items.push({
+      kind: 'measurement',
+      id: m.id,
+      code: `${formatSignedTemp(m.temperature_c)} °C @ ${m.depth_m} м`,
+      updated_at: m.created_at,
+      parentId: m.borehole_id,
+      parentCode: boreholeCodes.get(m.borehole_id),
+    });
+  }
+
+  items.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  return items;
+}
+
+function formatSignedTemp(t: number): string {
+  const sign = t > 0 ? '+' : '';
+  return `${sign}${t}`;
+}
+
+// ============================================================================
+// История изменений объекта (Этап 5.2)
+// ============================================================================
+
+export interface ObjectHistoryEntry {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  action: 'insert' | 'update' | 'delete' | 'restore' | 'sync';
+  old_data: Record<string, unknown> | null;
+  new_data: Record<string, unknown> | null;
+  created_at: string;
+}
+
+// Читает audit_log через RPC fn_object_history (SECURITY DEFINER +
+// проверка fn_can_read_polygon внутри). audit_log под RLS «только для
+// админов», а мы хотим показать историю всем, кто может читать
+// полигон объекта.
+export async function listObjectHistory(
+  table: 'boreholes' | 'observation_points' | 'measurements' | 'polygons',
+  recordId: string,
+): Promise<ObjectHistoryEntry[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('fn_object_history' as never, {
+    p_table: table,
+    p_record_id: recordId,
+  } as never);
+  if (error) return [];
+  return (data as ObjectHistoryEntry[]) ?? [];
+}

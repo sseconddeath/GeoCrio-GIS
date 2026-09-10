@@ -12,6 +12,7 @@ export const PROTECTED_PREFIXES = [
   '/polygons',
   '/boreholes',
   '/observation-points',
+  '/trash',
 ] as const;
 
 // Страницы аутентификации — залогиненного пользователя с них нужно увести.

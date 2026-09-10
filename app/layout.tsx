@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import { InstallPrompt } from '@/components/pwa/InstallPrompt';
 import { OfflineBanner } from '@/components/pwa/OfflineBanner';
 import { ServiceWorkerRegistrar } from '@/components/pwa/ServiceWorkerRegistrar';
+import { ToastProvider } from '@/components/ui/Toast';
 import './globals.css';
 
 const inter = Inter({
@@ -41,10 +42,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru" className={inter.variable}>
       <body className="font-sans">
-        <OfflineBanner />
-        {children}
-        <InstallPrompt />
-        <ServiceWorkerRegistrar />
+        <ToastProvider>
+          <OfflineBanner />
+          {children}
+          <InstallPrompt />
+          <ServiceWorkerRegistrar />
+        </ToastProvider>
       </body>
     </html>
   );

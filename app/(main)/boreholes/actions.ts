@@ -108,13 +108,15 @@ export async function softDeleteBoreholeAction(id: string): Promise<void> {
   redirect('/map');
 }
 
-export async function restoreBoreholeAction(id: string): Promise<void> {
+export async function restoreBoreholeAction(id: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const { error } = await supabase.from('boreholes').update({ is_deleted: false }).eq('id', id);
-  if (error) throw new Error(translateDbError(error));
+  if (error) return { ok: false, error: translateDbError(error) };
   revalidatePath('/map');
   revalidatePath('/data');
+  revalidatePath('/trash');
   revalidatePath(`/boreholes/${id}`);
+  return { ok: true };
 }
 
 // Queue-friendly версии: те же вставки/обновления, но принимают plain

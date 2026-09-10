@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
 import {
   createMeasurementAction,
   type MeasurementActionState,
@@ -21,10 +22,17 @@ const initialState: MeasurementActionState = {};
 export function MeasurementForm({ boreholeId }: MeasurementFormProps) {
   const [state, formAction, pending] = useActionState(createMeasurementAction, initialState);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
-    if (state.success) formRef.current?.reset();
-  }, [state.success]);
+    if (state.success) {
+      formRef.current?.reset();
+      showToast({ kind: 'success', message: 'Замер сохранён. График T(z) обновлён.' });
+    }
+  }, [state.success, showToast]);
+  useEffect(() => {
+    if (state.error) showToast({ kind: 'error', message: state.error });
+  }, [state.error, showToast]);
 
   return (
     <form
@@ -35,9 +43,6 @@ export function MeasurementForm({ boreholeId }: MeasurementFormProps) {
       <input type="hidden" name="boreholeId" value={boreholeId} />
       <div className="text-sm font-medium text-gray-900">Добавить замер температуры</div>
       <FormError message={state.error} />
-      {state.success ? (
-        <p className="text-sm text-green-700">Замер сохранён.</p>
-      ) : null}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Input

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
+import { ObjectHistory } from '@/components/history/ObjectHistory';
 import { PhotoGallery } from '@/components/photos/PhotoGallery';
 import { PhotoUploader } from '@/components/photos/PhotoUploader';
 import { POINT_TYPE_LABELS } from '@/lib/constants';
@@ -8,6 +9,7 @@ import {
   canWritePolygon,
   getObservationPointFeature,
   getProfileById,
+  listObjectHistory,
   listPhotosForParent,
 } from '@/lib/supabase/queries';
 import { softDeleteObservationPointAction } from '../actions';
@@ -23,10 +25,11 @@ export default async function ObservationPointPage({
 
   const p = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
-  const [author, canEdit, photos] = await Promise.all([
+  const [author, canEdit, photos, history] = await Promise.all([
     getProfileById(p.created_by),
     canWritePolygon(p.polygon_id),
     listPhotosForParent({ kind: 'observation_point', id }),
+    listObjectHistory('observation_points', id),
   ]);
   const deleteAction = softDeleteObservationPointAction.bind(null, id);
 
@@ -79,10 +82,24 @@ export default async function ObservationPointPage({
         ) : null}
       </dl>
 
-      <div className="mt-6 space-y-4">
+      <section className="mt-6 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900">Фото</h2>
         <PhotoGallery photos={photos} parent={{ kind: 'observation_point', id }} canEdit={canEdit} />
         {canEdit ? <PhotoUploader parent={{ kind: 'observation_point', id }} /> : null}
-      </div>
+      </section>
+
+      <section className="mt-6 space-y-3">
+        <h2 className="text-lg font-semibold text-gray-900">История изменений</h2>
+        <ObjectHistory
+          history={history}
+          displayFields={{
+            code: 'Код',
+            point_type: 'Тип',
+            description: 'Описание',
+            is_deleted: 'Удалена',
+          }}
+        />
+      </section>
 
       {canEdit ? (
         <div className="mt-6 flex gap-3">
@@ -92,7 +109,11 @@ export default async function ObservationPointPage({
           >
             Редактировать
           </Link>
-          <SoftDeleteButton action={deleteAction} />
+          <SoftDeleteButton
+            action={deleteAction}
+            title={`Удалить точку наблюдения ${p.code}?`}
+            description="Точка и все её фото исчезнут с карты и списков. Восстановить можно в разделе «Корзина» в течение 30 дней."
+          />
         </div>
       ) : (
         <p className="mt-6 text-xs text-gray-500">
