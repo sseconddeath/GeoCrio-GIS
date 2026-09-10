@@ -250,6 +250,12 @@ Mergin, Fulcrum, ODK, OSM, Wikipedia).
     Возврат `{ok, error}` вместо throw, `PhotoGallery` использует
     `ConfirmDialog` + toast вместо `window.confirm`.
 
+## Деплой в прод (Supabase + Vercel)
+
+Пошаговая инструкция — в **[DEPLOY.md](./DEPLOY.md)**. Первый деплой
+занимает 20–30 минут, всё бесплатно в рамках free-плана обоих сервисов
+(карту не спрашивают).
+
 ## Локальный запуск миграций
 
 ```bash
@@ -258,7 +264,8 @@ supabase db push
 ```
 
 или через SQL Editor в Supabase Dashboard — накатить файлы из
-`supabase/migrations/` по порядку.
+`supabase/migrations/` по порядку. Миграцию 003 пропускать (seed
+тестового полигона нужен только для разработки).
 
 ## Переменные окружения
 
