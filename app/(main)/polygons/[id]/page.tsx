@@ -75,12 +75,20 @@ export default async function PolygonOverviewPage({
           Таблица объектов
         </Link>
         {canWrite ? (
-          <Link
-            href={`/polygons/${polygon.id}/edit`}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-gray-300 px-5 text-sm font-medium text-header hover:bg-gray-50"
-          >
-            Редактировать границу
-          </Link>
+          <>
+            <Link
+              href={`/polygons/${polygon.id}/edit`}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-gray-300 px-5 text-sm font-medium text-header hover:bg-gray-50"
+            >
+              Редактировать границу
+            </Link>
+            <Link
+              href={`/polygons/${polygon.id}/import`}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-gray-300 px-5 text-sm font-medium text-header hover:bg-gray-50"
+            >
+              Импорт CSV
+            </Link>
+          </>
         ) : null}
         {isOwner ? (
           <Link

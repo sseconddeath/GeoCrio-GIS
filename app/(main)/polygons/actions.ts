@@ -213,3 +213,110 @@ export async function removeMemberAction(
   revalidatePath(`/polygons/${polygonId}/settings`);
   return {};
 }
+
+// ============================================================================
+// Массовый импорт (Этап 7): CSV → множественная вставка объектов в участок
+// ============================================================================
+
+import { formatPointEWKT } from '@/lib/geo';
+import type {
+  BoreholeCsvRow,
+  ObservationPointCsvRow,
+} from '@/lib/csv-mapping';
+
+const IMPORT_BATCH_LIMIT = 500;
+
+export interface BulkImportResult {
+  imported: number;
+  failed: number;
+  errors?: string[];
+}
+
+// Импорт скважин. Клиент уже провалидировал строки через zod-schema
+// (см. lib/csv-mapping.ts) — здесь только контроль лимита, привязка
+// polygon_id + created_by и сам batch INSERT. RLS отсечёт запись,
+// если пользователь не команда участка. PostGIS-триггер
+// fn_validate_location_in_polygon отсечёт точки вне полигона (+500 м
+// буфер). При ошибке в одной строке всё падает атомарно — Postgres
+// откатит транзакцию (это дефолт для одного INSERT).
+export async function bulkImportBoreholesAction(
+  polygonId: string,
+  rows: BoreholeCsvRow[],
+): Promise<BulkImportResult> {
+  if (rows.length === 0) return { imported: 0, failed: 0 };
+  if (rows.length > IMPORT_BATCH_LIMIT) {
+    return {
+      imported: 0,
+      failed: rows.length,
+      errors: [`Слишком большой пакет (${rows.length}). Импортируйте не более ${IMPORT_BATCH_LIMIT} строк за раз.`],
+    };
+  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { imported: 0, failed: rows.length, errors: ['Требуется вход в систему'] };
+
+  const payload = rows.map((r) => ({
+    polygon_id: polygonId,
+    code: r.code,
+    location: formatPointEWKT(r.lng, r.lat),
+    depth_m: r.depth_m ?? null,
+    soil_type: r.soil_type ?? null,
+    description: r.description ?? null,
+    created_by: user.id,
+  }));
+
+  // as never — payload собран из zod-валидированных значений (schema
+  // допускает только enum'ы), но узкие типы Database уже потеряны
+  // после .map(). Проверка типа значений случилась ещё в csv-mapping.
+  const { error, count } = await supabase
+    .from('boreholes')
+    .insert(payload as never, { count: 'exact' });
+  if (error) {
+    return { imported: 0, failed: rows.length, errors: [translateDbError(error)] };
+  }
+  revalidatePath(`/polygons/${polygonId}`);
+  revalidatePath('/map');
+  revalidatePath('/data');
+  return { imported: count ?? rows.length, failed: 0 };
+}
+
+export async function bulkImportObservationPointsAction(
+  polygonId: string,
+  rows: ObservationPointCsvRow[],
+): Promise<BulkImportResult> {
+  if (rows.length === 0) return { imported: 0, failed: 0 };
+  if (rows.length > IMPORT_BATCH_LIMIT) {
+    return {
+      imported: 0,
+      failed: rows.length,
+      errors: [`Слишком большой пакет (${rows.length}). Импортируйте не более ${IMPORT_BATCH_LIMIT} строк за раз.`],
+    };
+  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { imported: 0, failed: rows.length, errors: ['Требуется вход в систему'] };
+
+  const payload = rows.map((r) => ({
+    polygon_id: polygonId,
+    code: r.code,
+    location: formatPointEWKT(r.lng, r.lat),
+    point_type: r.point_type,
+    description: r.description ?? null,
+    created_by: user.id,
+  }));
+
+  const { error, count } = await supabase
+    .from('observation_points')
+    .insert(payload as never, { count: 'exact' });
+  if (error) {
+    return { imported: 0, failed: rows.length, errors: [translateDbError(error)] };
+  }
+  revalidatePath(`/polygons/${polygonId}`);
+  revalidatePath('/map');
+  revalidatePath('/data');
+  return { imported: count ?? rows.length, failed: 0 };
+}
