@@ -29,7 +29,16 @@ export async function Header({ fullName, role, inboxCount }: HeaderProps) {
   ]);
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-3 bg-header px-4 text-white md:px-6">
+    <header
+      className="flex shrink-0 items-center justify-between gap-3 bg-header px-4 text-white md:px-6"
+      style={{
+        // Учитываем «челку» iPhone: сама шапка едет под status bar
+        // (viewport-fit=cover), но контент внутри — ниже notch'а.
+        paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)',
+        paddingBottom: '0.5rem',
+        minHeight: 'calc(4rem + env(safe-area-inset-top))',
+      }}
+    >
       <div className="flex min-w-0 items-center gap-4">
         <span className="hidden text-lg font-semibold sm:block">ГеоКрио ГИС</span>
         <div className="hidden md:block">

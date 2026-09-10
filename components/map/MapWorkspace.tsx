@@ -68,7 +68,7 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
   };
 
   return (
-    <div className="relative flex h-[calc(100vh-4rem)] w-full">
+    <div className="relative flex h-[calc(100dvh-4rem)] w-full">
       <RealtimeRefresh polygonId={polygon.id} />
       {/* Sidebar — 240px на десктопе, оверлей на планшете/мобилке. */}
       <aside

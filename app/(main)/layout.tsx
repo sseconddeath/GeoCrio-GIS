@@ -22,7 +22,9 @@ export default async function MainLayout({ children }: { children: React.ReactNo
   return (
     <div className="flex min-h-screen flex-col">
       <Header fullName={profile.full_name} role={profile.role} inboxCount={inboxCount} />
-      <main className="flex-1 overflow-auto pb-16 md:pb-0">{children}</main>
+      <main className="flex-1 overflow-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+        {children}
+      </main>
       <MobileNav inboxCount={inboxCount} />
     </div>
   );

@@ -15,7 +15,14 @@ export function MobileNav({ inboxCount }: { inboxCount: number }) {
   );
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-gray-200 bg-white md:hidden">
+    <nav
+      className="fixed inset-x-0 bottom-0 z-10 flex border-t border-gray-200 bg-white md:hidden"
+      style={{
+        // Home indicator у iPhone: пункты навигации должны быть над ним,
+        // а не под — иначе тапаешь и промахиваешься.
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
       {MOBILE_NAV_ITEMS.map((item, index) => {
         const showBadge = item.href === '/inbox' && inboxCount > 0;
         return (

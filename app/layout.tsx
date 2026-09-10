@@ -34,7 +34,12 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
-  themeColor: '#1a1f2e',
+  // theme-color для браузера (Chrome/Safari address bar + overscroll
+  // bounce). Ставим светлый, чтобы на iOS Safari при «резинке» вверх/
+  // вниз не мелькала тёмная полоса под status bar. В PWA-standalone
+  // режиме используется отдельный theme_color из manifest.ts, там
+  // остаётся тёмный — сливается с нашим Header.
+  themeColor: '#f9fafb',
   viewportFit: 'cover',
 };
 
