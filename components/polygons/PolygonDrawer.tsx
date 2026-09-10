@@ -2,23 +2,19 @@
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as maplibregl from 'maplibre-gl';
-import { useEffect, useRef } from 'react';
-import { TerraDraw, TerraDrawPolygonMode } from 'terra-draw';
-import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
+import { useEffect, useRef, useState } from 'react';
 import { COLORS } from '@/lib/constants';
 import { polygonBounds } from '@/lib/geo';
 
 interface PolygonDrawerProps {
   // Начальное значение — если редактируем существующий полигон.
   initial?: GeoJSON.Polygon | null;
-  // Вызывается, когда пользователь закончил рисовать (2й клик по первой
-  // вершине замыкает полигон) или подвинул вершину. null — если полигон
-  // ещё не готов (0-2 вершины).
+  // Вызывается, когда полигон готов (≥3 точки + пользователь замкнул)
+  // или подвинул вершину. null — если полигон ещё не готов.
   onChange: (polygon: GeoJSON.Polygon | null) => void;
 }
 
-// OSM-подложка — та же, что в основном MapView, чтобы редактор границы
-// выглядел единообразно с основной картой.
+// OSM-подложка — та же, что в основном MapView.
 const OSM_STYLE: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
@@ -33,20 +29,46 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-// Императивная обёртка: MapLibre в useEffect, поверх — TerraDraw.
-// Компонент не связан с React-стейтом на каждый клик — только эмиттит
-// готовый полигон в onChange.
+// Своя простая рисовалка полигона (замена terra-draw, у которой была
+// не диагностируемая проблема с обработкой кликов на нашем стенде).
+//
+// Логика:
+//  - клик по карте добавляет точку;
+//  - точки рисуются как оранжевые кружки на карте;
+//  - линии между ними — сплошные;
+//  - кнопки «Отменить точку», «Замкнуть» (активна с 3+ точками),
+//    «Начать заново»;
+//  - при замыкании эмитим готовый GeoJSON.Polygon.
+//
+// Не даём multi-touch pinch мешать: doubleClickZoom выключен, single
+// tap = точка. Долгое нажатие / pan — работают как обычно (MapLibre
+// dragPan остаётся включённым).
 export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   });
 
+  // Список текущих вершин (long, lat). Пока полигон НЕ замкнут — просто
+  // точки; после замыкания — фиксированный полигон. Ставим точки —
+  // индикатор снизу подсказывает «нужно ещё 2 точки».
+  const [points, setPoints] = useState<[number, number][]>(() => {
+    if (initial && initial.coordinates[0]?.length >= 4) {
+      // Обратим замкнутое кольцо (первая=последняя) в открытый список.
+      return initial.coordinates[0].slice(0, -1) as [number, number][];
+    }
+    return [];
+  });
+  const [closed, setClosed] = useState<boolean>(
+    Boolean(initial && initial.coordinates[0]?.length >= 4),
+  );
+
+  // Инициализируем карту один раз.
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Стартовый вид: если есть initial — фитим по нему; иначе — мир целиком.
     let center: [number, number] = [65.6, 57.2];
     let zoom = 4;
     if (initial && initial.coordinates[0]?.length >= 4) {
@@ -62,82 +84,148 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       center,
       zoom,
       attributionControl: { compact: true },
-      // Двойной тап-zoom мешает клику по карте: быстро тыкаешь чтобы
-      // добавить вершину — карта воспринимает как double-click и зумит.
-      // Terra-draw формально отключает doubleClickZoom своим адаптером,
-      // но между init map'ы и стартом draw есть окно, когда двойной
-      // клик проходит. Выключаем сразу.
+      // Одиночный клик = точка. Двойной клик не зумит.
       doubleClickZoom: false,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
 
-    let draw: TerraDraw | null = null;
+    mapRef.current = map;
 
     map.on('load', () => {
-      // Если есть initial — фитим сразу.
       if (initial && initial.coordinates[0]?.length >= 4) {
         const coords = initial.coordinates[0] as [number, number][];
         map.fitBounds(polygonBounds(coords), { padding: 40, animate: false });
       }
 
-      const adapter = new TerraDrawMapLibreGLAdapter({ map });
-      draw = new TerraDraw({
-        adapter,
-        modes: [
-          new TerraDrawPolygonMode({
-            styles: {
-              fillColor: COLORS.header,
-              fillOpacity: 0.1,
-              outlineColor: COLORS.header,
-              outlineWidth: 2,
-              closingPointWidth: 6,
-              closingPointColor: COLORS.borehole,
-            },
-          }),
-        ],
+      // Пустые источники — данные потом подтянет второй useEffect.
+      map.addSource('drawer-poly', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
       });
-      draw.start();
-      draw.setMode('polygon');
+      map.addSource('drawer-line', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addSource('drawer-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
 
-      if (initial && initial.coordinates[0]?.length >= 4) {
-        // addFeatures требует id + createdAt/updatedAt по спецификации,
-        // но при отсутствии id генератор их сам добавит.
-        draw.addFeatures([
-          {
-            type: 'Feature',
-            geometry: initial,
-            properties: { mode: 'polygon' },
-          },
-        ]);
-      }
+      // Заливка (только когда замкнули).
+      map.addLayer({
+        id: 'drawer-poly-fill',
+        type: 'fill',
+        source: 'drawer-poly',
+        paint: { 'fill-color': COLORS.header, 'fill-opacity': 0.15 },
+      });
+      // Контур (замкнутый или незамкнутый).
+      map.addLayer({
+        id: 'drawer-poly-line',
+        type: 'line',
+        source: 'drawer-poly',
+        paint: { 'line-color': COLORS.header, 'line-width': 2 },
+      });
+      map.addLayer({
+        id: 'drawer-line-preview',
+        type: 'line',
+        source: 'drawer-line',
+        paint: {
+          'line-color': COLORS.header,
+          'line-width': 2,
+          'line-dasharray': [3, 2],
+        },
+      });
+      // Точки — крупные и яркие, чтобы даже на пёстрой OSM были видны.
+      map.addLayer({
+        id: 'drawer-points-circle',
+        type: 'circle',
+        source: 'drawer-points',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': COLORS.borehole,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
 
-      // Эмиттим полигон при каждом изменении.
-      const emit = () => {
-        if (!draw) return;
-        const features = draw.getSnapshot();
-        const polygonFeature = features.find((f) => f.geometry.type === 'Polygon');
-        if (polygonFeature && polygonFeature.geometry.type === 'Polygon') {
-          onChangeRef.current(polygonFeature.geometry as GeoJSON.Polygon);
-        } else {
-          onChangeRef.current(null);
-        }
-      };
-      draw.on('finish', emit);
-      draw.on('change', emit);
+      // Один клик по карте = одна вершина. Игнорируем клик, когда полигон
+      // уже замкнут (иначе пользователь начал бы добавлять «висящие»
+      // точки к готовому). Если хочет — сначала жмёт «Начать заново».
+      map.on('click', (e) => {
+        setClosed((wasClosed) => {
+          if (wasClosed) return wasClosed;
+          setPoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
+          return wasClosed;
+        });
+      });
+
+      // Курсор pointer над картой — подсказка что клик что-то делает.
+      map.getCanvas().style.cursor = 'crosshair';
     });
 
     return () => {
-      try {
-        draw?.stop();
-      } catch {
-        // no-op — если draw уже остановлен
-      }
       map.remove();
+      mapRef.current = null;
     };
-    // Перерисовка ТОЛЬКО при смене initial (обычно один раз при монтировании
-    // на страницах создания/редактирования).
-  }, [initial]);
+    // Реагируем только на смену initial (обычно один раз при монтировании).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Синхронизация точек/полигона с MapLibre. Пересчитываем на каждый
+  // change без пересоздания карты.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      const pointsSrc = map.getSource('drawer-points') as maplibregl.GeoJSONSource | undefined;
+      const lineSrc = map.getSource('drawer-line') as maplibregl.GeoJSONSource | undefined;
+      const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
+      if (!pointsSrc || !lineSrc || !polySrc) return;
+
+      pointsSrc.setData({
+        type: 'FeatureCollection',
+        features: points.map((p, i) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: p },
+          properties: { index: i },
+        })),
+      });
+
+      if (closed && points.length >= 3) {
+        // Замкнутый полигон = заливка + контур; preview-линию гасим.
+        polySrc.setData({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
+          properties: {},
+        });
+        lineSrc.setData({ type: 'FeatureCollection', features: [] });
+        onChangeRef.current({
+          type: 'Polygon',
+          coordinates: [[...points, points[0]]],
+        });
+      } else if (points.length >= 2) {
+        // Незамкнутая ломаная — сплошная линия по расставленным точкам.
+        polySrc.setData({ type: 'FeatureCollection', features: [] });
+        lineSrc.setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: points },
+          properties: {},
+        });
+        onChangeRef.current(null);
+      } else {
+        polySrc.setData({ type: 'FeatureCollection', features: [] });
+        lineSrc.setData({ type: 'FeatureCollection', features: [] });
+        onChangeRef.current(null);
+      }
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once('load', apply);
+  }, [points, closed]);
+
+  const canClose = points.length >= 3 && !closed;
+  const canUndo = points.length > 0 && !closed;
+  const canReset = points.length > 0;
 
   return (
     <div className="flex flex-col gap-2">
@@ -145,10 +233,48 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
         ref={containerRef}
         className="h-[400px] w-full rounded-md border border-gray-300"
       />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setPoints((p) => p.slice(0, -1))}
+          disabled={!canUndo}
+          className="inline-flex min-h-[36px] items-center rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ← Отменить точку
+        </button>
+        <button
+          type="button"
+          onClick={() => setClosed(true)}
+          disabled={!canClose}
+          className="inline-flex min-h-[36px] items-center rounded-md bg-header px-3 text-xs font-medium text-white hover:bg-header/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Замкнуть контур
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPoints([]);
+            setClosed(false);
+          }}
+          disabled={!canReset}
+          className="inline-flex min-h-[36px] items-center rounded-md border border-red-300 bg-white px-3 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Начать заново
+        </button>
+        <span className="ml-auto text-xs text-gray-600">
+          {closed
+            ? `Контур замкнут (${points.length} вершин)`
+            : points.length === 0
+              ? 'Кликните по карте — поставьте первую вершину'
+              : points.length < 3
+                ? `Ещё ${3 - points.length} точки минимум`
+                : `${points.length} точек — можно замыкать`}
+        </span>
+      </div>
       <p className="text-xs text-gray-500">
-        Кликните на карту, чтобы поставить вершины границы участка. Чтобы
-        замкнуть контур, кликните на первую вершину ещё раз. Существующие
-        вершины можно двигать (кликнув и потянув).
+        Обведите границу участка кликами по карте (минимум 3 точки).
+        Точки ставятся в порядке клика, соединяются линиями. Когда всё
+        готово — нажмите «Замкнуть контур».
       </p>
     </div>
   );
