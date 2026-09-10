@@ -106,3 +106,46 @@ export const observationPointSchema = z.object({
 
 export type BoreholeInput = z.infer<typeof boreholeSchema>;
 export type ObservationPointInput = z.infer<typeof observationPointSchema>;
+
+// ============================================================================
+// Этап 2.5: полигоны (участки) + приглашения соавторов
+// ============================================================================
+
+const polygonName = z
+  .string()
+  .trim()
+  .min(2, 'Название участка — минимум 2 символа')
+  .max(120, 'Название не длиннее 120 символов');
+
+// Клиент передаёт границу как GeoJSON.Polygon (объект, а не строка).
+// Server Action переведёт её в EWKT перед вставкой в БД.
+const polygonBoundary = z
+  .object({
+    type: z.literal('Polygon'),
+    coordinates: z
+      .array(z.array(z.tuple([z.number(), z.number()])))
+      .min(1, 'Полигон должен содержать хотя бы одно кольцо'),
+  })
+  .refine(
+    (poly) => poly.coordinates[0].length >= 4,
+    'Полигон должен содержать не менее 3 разных вершин (первая = последней)',
+  );
+
+const isPublic = z
+  .union([z.boolean(), z.literal('on'), z.literal('true'), z.literal('false'), z.undefined()])
+  .transform((v) => v === true || v === 'on' || v === 'true');
+
+export const polygonSchema = z.object({
+  name: polygonName,
+  description: description,
+  boundary: polygonBoundary,
+  is_public: isPublic,
+});
+
+export const polygonInviteSchema = z.object({
+  polygonId: z.string().uuid('Некорректный идентификатор участка'),
+  email: z.string().email('Введите корректный email коллеги'),
+});
+
+export type PolygonInput = z.infer<typeof polygonSchema>;
+export type PolygonInviteInput = z.infer<typeof polygonInviteSchema>;

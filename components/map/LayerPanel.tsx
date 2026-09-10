@@ -93,15 +93,10 @@ export function LayerPanel({ polygonName, stats, visibility, onToggle }: LayerPa
               <dt>Точки наблюдений</dt>
               <dd className="font-medium">{stats.obs_point_count}</dd>
             </div>
-            <div className="flex justify-between">
-              <dt>Замеры</dt>
-              <dd className="font-medium">{stats.measurement_count}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt>Фото</dt>
-              <dd className="font-medium">{stats.photo_count}</dd>
-            </div>
           </dl>
+          {/* Замеры и фото пока не заводятся из UI (появятся в следующих
+              версиях, см. дорожную карту). Скрываем счётчики, чтобы «0/0»
+              не выглядели как поломка. */}
         </div>
       ) : null}
 

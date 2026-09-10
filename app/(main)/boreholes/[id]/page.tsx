@@ -2,7 +2,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
 import { PERMAFROST_LABELS, SOIL_TYPE_LABELS } from '@/lib/constants';
-import { getBoreholeFeature } from '@/lib/supabase/queries';
+import {
+  canWritePolygon,
+  getBoreholeFeature,
+  getProfileById,
+} from '@/lib/supabase/queries';
 import { softDeleteBoreholeAction } from '../actions';
 
 export default async function BoreholePage({
@@ -17,7 +21,11 @@ export default async function BoreholePage({
   const b = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
 
-  // Bind id уже здесь — SoftDeleteButton остаётся простым client-компонентом.
+  const [author, canEdit] = await Promise.all([
+    getProfileById(b.created_by),
+    canWritePolygon(b.polygon_id),
+  ]);
+
   const deleteAction = softDeleteBoreholeAction.bind(null, id);
 
   return (
@@ -48,11 +56,25 @@ export default async function BoreholePage({
           </dd>
         </div>
         <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Автор</dt>
+          <dd className="mt-1 text-sm text-gray-900">
+            {author?.full_name ?? '—'}
+          </dd>
+        </div>
+        <div>
           <dt className="text-xs uppercase tracking-wide text-gray-500">Создана</dt>
           <dd className="mt-1 text-sm text-gray-900">
             {new Date(b.created_at).toLocaleString('ru-RU')}
           </dd>
         </div>
+        {b.updated_at && b.updated_at !== b.created_at ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">Изменена</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {new Date(b.updated_at).toLocaleString('ru-RU')}
+            </dd>
+          </div>
+        ) : null}
         {b.description ? (
           <div className="sm:col-span-2">
             <dt className="text-xs uppercase tracking-wide text-gray-500">Описание</dt>
@@ -75,15 +97,21 @@ export default async function BoreholePage({
         </p>
       </div>
 
-      <div className="mt-6 flex gap-3">
-        <Link
-          href={`/boreholes/${id}/edit`}
-          className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-header px-5 text-sm font-medium text-white hover:bg-header/90"
-        >
-          Редактировать
-        </Link>
-        <SoftDeleteButton action={deleteAction} />
-      </div>
+      {canEdit ? (
+        <div className="mt-6 flex gap-3">
+          <Link
+            href={`/boreholes/${id}/edit`}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-header px-5 text-sm font-medium text-white hover:bg-header/90"
+          >
+            Редактировать
+          </Link>
+          <SoftDeleteButton action={deleteAction} />
+        </div>
+      ) : (
+        <p className="mt-6 text-xs text-gray-500">
+          Редактировать эту скважину может только команда участка.
+        </p>
+      )}
     </div>
   );
 }

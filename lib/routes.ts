@@ -9,6 +9,7 @@ export const PROTECTED_PREFIXES = [
   '/analytics',
   '/export',
   '/admin',
+  '/polygons',
   '/boreholes',
   '/observation-points',
 ] as const;

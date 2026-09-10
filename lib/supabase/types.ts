@@ -60,9 +60,17 @@ export type PolygonRow = {
   center_lat: number;
   center_lng: number;
   default_zoom: number;
+  is_public: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type PolygonMemberRow = {
+  polygon_id: string;
+  user_id: string;
+  invited_by: string | null;
+  created_at: string;
 }
 
 export type BoreholeRow = {
@@ -269,9 +277,14 @@ export interface Database {
         PolygonRow,
         WithGeometryWrite<Optional<
           PolygonRow,
-          'id' | 'description' | 'center_lat' | 'center_lng' | 'default_zoom' | 'created_by' | 'created_at' | 'updated_at'
+          'id' | 'description' | 'center_lat' | 'center_lng' | 'default_zoom' | 'is_public' | 'created_by' | 'created_at' | 'updated_at'
         >>,
         WithGeometryWrite<Partial<Omit<PolygonRow, 'id' | 'center_lat' | 'center_lng'>>>
+      >;
+      polygon_members: TableDef<
+        PolygonMemberRow,
+        Optional<PolygonMemberRow, 'invited_by' | 'created_at'>,
+        Partial<Pick<PolygonMemberRow, 'invited_by'>>
       >;
       boreholes: TableDef<
         BoreholeRow,

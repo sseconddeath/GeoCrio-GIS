@@ -2,7 +2,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { SoftDeleteButton } from '@/components/data/SoftDeleteButton';
 import { POINT_TYPE_LABELS } from '@/lib/constants';
-import { getObservationPointFeature } from '@/lib/supabase/queries';
+import {
+  canWritePolygon,
+  getObservationPointFeature,
+  getProfileById,
+} from '@/lib/supabase/queries';
 import { softDeleteObservationPointAction } from '../actions';
 
 export default async function ObservationPointPage({
@@ -16,6 +20,10 @@ export default async function ObservationPointPage({
 
   const p = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
+  const [author, canEdit] = await Promise.all([
+    getProfileById(p.created_by),
+    canWritePolygon(p.polygon_id),
+  ]);
   const deleteAction = softDeleteObservationPointAction.bind(null, id);
 
   return (
@@ -42,11 +50,23 @@ export default async function ObservationPointPage({
           </dd>
         </div>
         <div>
+          <dt className="text-xs uppercase tracking-wide text-gray-500">Автор</dt>
+          <dd className="mt-1 text-sm text-gray-900">{author?.full_name ?? '—'}</dd>
+        </div>
+        <div>
           <dt className="text-xs uppercase tracking-wide text-gray-500">Создана</dt>
           <dd className="mt-1 text-sm text-gray-900">
             {new Date(p.created_at).toLocaleString('ru-RU')}
           </dd>
         </div>
+        {p.updated_at && p.updated_at !== p.created_at ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">Изменена</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {new Date(p.updated_at).toLocaleString('ru-RU')}
+            </dd>
+          </div>
+        ) : null}
         {p.description ? (
           <div className="sm:col-span-2">
             <dt className="text-xs uppercase tracking-wide text-gray-500">Описание</dt>
@@ -55,15 +75,21 @@ export default async function ObservationPointPage({
         ) : null}
       </dl>
 
-      <div className="mt-6 flex gap-3">
-        <Link
-          href={`/observation-points/${id}/edit`}
-          className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-header px-5 text-sm font-medium text-white hover:bg-header/90"
-        >
-          Редактировать
-        </Link>
-        <SoftDeleteButton action={deleteAction} />
-      </div>
+      {canEdit ? (
+        <div className="mt-6 flex gap-3">
+          <Link
+            href={`/observation-points/${id}/edit`}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-header px-5 text-sm font-medium text-white hover:bg-header/90"
+          >
+            Редактировать
+          </Link>
+          <SoftDeleteButton action={deleteAction} />
+        </div>
+      ) : (
+        <p className="mt-6 text-xs text-gray-500">
+          Редактировать эту точку может только команда участка.
+        </p>
+      )}
     </div>
   );
 }

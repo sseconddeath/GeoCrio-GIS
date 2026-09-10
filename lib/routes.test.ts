@@ -9,11 +9,14 @@ test('isProtectedRoute: защищённые пути', () => {
   assert.equal(isProtectedRoute('/boreholes'), true);
   assert.equal(isProtectedRoute('/boreholes/uuid-1'), true);
   assert.equal(isProtectedRoute('/observation-points/uuid-1/edit'), true);
+  assert.equal(isProtectedRoute('/polygons'), true);
+  assert.equal(isProtectedRoute('/polygons/uuid-1/settings'), true);
   assert.equal(isProtectedRoute('/login'), false);
   assert.equal(isProtectedRoute('/'), false);
-  // Не должен ловить префиксные совпадения по случайности (например /mapx или /boreholesXYZ).
+  // Не должен ловить префиксные совпадения по случайности.
   assert.equal(isProtectedRoute('/mapx'), false);
   assert.equal(isProtectedRoute('/boreholesXYZ'), false);
+  assert.equal(isProtectedRoute('/polygonsomething'), false);
 });
 
 test('isAuthRoute: страницы аутентификации', () => {

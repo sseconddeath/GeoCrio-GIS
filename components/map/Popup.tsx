@@ -8,12 +8,12 @@ interface PopupProps {
   feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>;
   onClose: () => void;
   onEdit: () => void;
+  // Может ли текущий пользователь редактировать этот объект? Для чужих
+  // публичных участков — false, кнопка «Редактировать» тогда скрывается.
+  canEdit: boolean;
 }
 
-// Плавающий попап поверх карты. Не встраивается в MapLibre-popup, а рендерится
-// React'ом обычным absolute-контейнером — так проще управлять состоянием и
-// стилизовать под общий UI (раздел 12 ТЗ).
-export function Popup({ feature, onClose, onEdit }: PopupProps) {
+export function Popup({ feature, onClose, onEdit, canEdit }: PopupProps) {
   const props = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
   const isBorehole = props.type === 'borehole';
@@ -98,13 +98,15 @@ export function Popup({ feature, onClose, onEdit }: PopupProps) {
         >
           Профиль
         </Link>
-        <button
-          type="button"
-          onClick={onEdit}
-          className="flex-1 rounded-md border border-gray-300 py-2 text-sm font-medium text-header hover:bg-gray-50"
-        >
-          Редактировать
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex-1 rounded-md border border-gray-300 py-2 text-sm font-medium text-header hover:bg-gray-50"
+          >
+            Редактировать
+          </button>
+        ) : null}
       </div>
     </div>
   );

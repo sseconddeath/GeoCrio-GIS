@@ -12,12 +12,13 @@ interface MapWorkspaceProps {
   polygon: PolygonRow;
   objects: GeoJSON.FeatureCollection<GeoJSON.Point, MapObjectProperties>;
   stats: PolygonStatsRow | null;
+  // Может ли текущий пользователь править объекты этого полигона? (Автор,
+  // соавтор или админ.) Если нет — клик по свободному месту не открывает
+  // форму создания, а попап показывает только «Профиль» без «Редактировать».
+  canWrite: boolean;
 }
 
-// Единственный клиентский корень страницы карты. Дальше вниз по дереву
-// монтируются: MapView (императивный MapLibre), LayerPanel (в Sidebar), а
-// поверх карты — плавающие Popup / AddObjectPanel / SearchBox.
-export function MapWorkspace({ polygon, objects, stats }: MapWorkspaceProps) {
+export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspaceProps) {
   const [visibility, setVisibility] = useState<LayerVisibility>({
     boreholes: true,
     observationPoints: true,
@@ -42,13 +43,17 @@ export function MapWorkspace({ polygon, objects, stats }: MapWorkspaceProps) {
 
   const [showSidebar, setShowSidebar] = useState(false);
 
-  const handleMapClick = useCallback((lng: number, lat: number) => {
-    setSelectedFeature(null);
-    setAddAt({ lng, lat });
-    // На мобилке — сразу прячем панель слоёв, чтобы форма создания
-    // открывалась поверх свободной карты.
-    setShowSidebar(false);
-  }, []);
+  const handleMapClick = useCallback(
+    (lng: number, lat: number) => {
+      if (!canWrite) return;
+      setSelectedFeature(null);
+      setAddAt({ lng, lat });
+      // На мобилке — сразу прячем панель слоёв, чтобы форма создания
+      // открывалась поверх свободной карты.
+      setShowSidebar(false);
+    },
+    [canWrite],
+  );
 
   const handleFeatureClick = useCallback(
     (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => {
@@ -102,6 +107,7 @@ export function MapWorkspace({ polygon, objects, stats }: MapWorkspaceProps) {
         {selectedFeature ? (
           <Popup
             feature={selectedFeature}
+            canEdit={canWrite}
             onClose={() => setSelectedFeature(null)}
             onEdit={() => {
               const target =
@@ -113,13 +119,19 @@ export function MapWorkspace({ polygon, objects, stats }: MapWorkspaceProps) {
           />
         ) : null}
 
-        {addAt ? (
+        {addAt && canWrite ? (
           <AddObjectPanel
             polygonId={polygon.id}
             lng={addAt.lng}
             lat={addAt.lat}
             onClose={() => setAddAt(null)}
           />
+        ) : null}
+
+        {!canWrite ? (
+          <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-gray-200 bg-white/95 px-4 py-1 text-xs text-gray-600 shadow-md">
+            Просмотр — редактирование доступно только команде участка
+          </div>
         ) : null}
 
         {/* Координаты курсора */}
