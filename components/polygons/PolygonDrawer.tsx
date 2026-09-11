@@ -29,44 +29,35 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-// Своя простая рисовалка полигона (замена terra-draw, у которой была
-// не диагностируемая проблема с обработкой кликов на нашем стенде).
+// Своя рисовалка полигона. Прошлая версия рисовала вершины через
+// map.addSource + circle-layer, и по неясной причине точки не появлялись,
+// хотя state обновлялся. Переписал точки на DOM-маркеры
+// (maplibregl.Marker) — это HTML-элементы, которые MapLibre сам
+// позиционирует относительно карты. Не зависят от готовности стиля,
+// source'ов, слоёв — просто работают. Линию/полигон оставил через
+// source+layer: они рисуются один раз в load-хендлере и обновляются
+// через setData на уже существующих источниках.
 //
 // Логика:
-//  - клик по карте добавляет точку;
-//  - точки рисуются как оранжевые кружки на карте;
-//  - линии между ними — сплошные;
-//  - кнопки «Отменить точку», «Замкнуть» (активна с 3+ точками),
-//    «Начать заново»;
-//  - при замыкании эмитим готовый GeoJSON.Polygon.
-//
-// Не даём multi-touch pinch мешать: doubleClickZoom выключен, single
-// tap = точка. Долгое нажатие / pan — работают как обычно (MapLibre
-// dragPan остаётся включённым).
+//  - клик по карте добавляет точку (оранжевый круг-DOM);
+//  - между точками — сплошная линия;
+//  - при замыкании — заливка полигона;
+//  - кнопки «Отменить точку», «Замкнуть» (с 3+ точками), «Начать заново».
 export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  // Собственный флаг готовности: isStyleLoaded() возвращает false пока
-  // грузятся тайлы OSM, а once('load', ...) после уже отгремевшего load
-  // молчит навсегда — из-за этой пары точки копились в state, но не
-  // рисовались. Ref флипается в true в load-обработчике сразу после
-  // addSource/addLayer, и sync-эффект просто ждёт, пока он не станет true.
-  const mapReadyRef = useRef(false);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
   const [mapReady, setMapReady] = useState(false);
-  // Актуальные closed/onChange для click-хендлера — регистрируем on('click')
-  // один раз в load-хендлере, поэтому обычные state/props оттуда не видны.
+  // Актуальные closed/onChange для click-хендлера, который вешается
+  // один раз (обычный state там был бы навсегда false).
   const closedRef = useRef(false);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   });
 
-  // Список текущих вершин (long, lat). Пока полигон НЕ замкнут — просто
-  // точки; после замыкания — фиксированный полигон. Ставим точки —
-  // индикатор снизу подсказывает «нужно ещё 2 точки».
   const [points, setPoints] = useState<[number, number][]>(() => {
     if (initial && initial.coordinates[0]?.length >= 4) {
-      // Обратим замкнутое кольцо (первая=последняя) в открытый список.
       return initial.coordinates[0].slice(0, -1) as [number, number][];
     }
     return [];
@@ -94,7 +85,7 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       center,
       zoom,
       attributionControl: { compact: true },
-      // Одиночный клик = точка. Двойной клик не зумит.
+      // Двойной клик не зумит — иначе быстрая расстановка сбоила бы.
       doubleClickZoom: false,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
@@ -108,7 +99,7 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
         map.fitBounds(polygonBounds(coords), { padding: 40, animate: false });
       }
 
-      // Пустые источники — данные потом подтянет второй useEffect.
+      // Пустые источники под линию и полигон.
       map.addSource('drawer-poly', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -117,19 +108,13 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
-      map.addSource('drawer-points', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
 
-      // Заливка (только когда замкнули).
       map.addLayer({
         id: 'drawer-poly-fill',
         type: 'fill',
         source: 'drawer-poly',
         paint: { 'fill-color': COLORS.header, 'fill-opacity': 0.15 },
       });
-      // Контур (замкнутый или незамкнутый).
       map.addLayer({
         id: 'drawer-poly-line',
         type: 'line',
@@ -146,72 +131,74 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
           'line-dasharray': [3, 2],
         },
       });
-      // Точки — крупные и яркие, чтобы даже на пёстрой OSM были видны.
-      map.addLayer({
-        id: 'drawer-points-circle',
-        type: 'circle',
-        source: 'drawer-points',
-        paint: {
-          'circle-radius': 7,
-          'circle-color': COLORS.borehole,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
 
-      // Один клик по карте = одна вершина. Игнорируем клик, когда полигон
-      // уже замкнут (иначе пользователь начал бы добавлять «висящие»
-      // точки к готовому). Если хочет — сначала жмёт «Начать заново».
-      // Читаем closed через ref, потому что обработчик регистрируется
-      // один раз и state здесь был бы вечно false.
       map.on('click', (e) => {
         if (closedRef.current) return;
         setPoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]]);
       });
 
-      // Курсор pointer над картой — подсказка что клик что-то делает.
       map.getCanvas().style.cursor = 'crosshair';
 
-      // Всё готово — sync-эффект теперь может пушить данные в источники.
-      mapReadyRef.current = true;
       setMapReady(true);
     });
 
     return () => {
+      // Убираем все DOM-маркеры перед уничтожением карты.
+      for (const m of markersRef.current) m.remove();
+      markersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
-    // Реагируем только на смену initial (обычно один раз при монтировании).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Синхронизация closed с ref — читается из click-хендлера.
   useEffect(() => {
     closedRef.current = closed;
   }, [closed]);
 
-  // Синхронизация точек/полигона с MapLibre. Ждём mapReady — иначе
-  // источники и слои ещё не созданы. При каждом изменении points/closed
-  // пере-setData'им, без пересоздания карты.
+  // Пере-рендер маркеров вершин через DOM. Полностью пересоздаём —
+  // список маленький, оптимизация не нужна, зато нет рассинхрона
+  // «где-то остался старый маркер».
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const pointsSrc = map.getSource('drawer-points') as maplibregl.GeoJSONSource | undefined;
+
+    // Снести старые маркеры.
+    for (const m of markersRef.current) m.remove();
+    markersRef.current = [];
+
+    // Поставить новые — обычный HTML-круг с рамкой.
+    points.forEach((coord, i) => {
+      const el = document.createElement('div');
+      el.setAttribute('data-drawer-vertex-index', String(i));
+      el.style.width = '16px';
+      el.style.height = '16px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = COLORS.borehole;
+      el.style.border = '2px solid #ffffff';
+      el.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
+      el.style.cursor = 'default';
+      // pointerEvents:none — чтобы клик по маркеру не блокировал клик
+      // по карте (иначе рядом с существующей точкой нельзя было бы
+      // поставить следующую).
+      el.style.pointerEvents = 'none';
+
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat(coord)
+        .addTo(map);
+      markersRef.current.push(marker);
+    });
+  }, [points, mapReady]);
+
+  // Пере-setData для линии и полигона.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
     const lineSrc = map.getSource('drawer-line') as maplibregl.GeoJSONSource | undefined;
     const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
-    if (!pointsSrc || !lineSrc || !polySrc) return;
-
-    pointsSrc.setData({
-      type: 'FeatureCollection',
-      features: points.map((p, i) => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: p },
-        properties: { index: i },
-      })),
-    });
+    if (!lineSrc || !polySrc) return;
 
     if (closed && points.length >= 3) {
-      // Замкнутый полигон = заливка + контур; preview-линию гасим.
       polySrc.setData({
         type: 'Feature',
         geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
@@ -223,7 +210,6 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
         coordinates: [[...points, points[0]]],
       });
     } else if (points.length >= 2) {
-      // Незамкнутая ломаная — сплошная линия по расставленным точкам.
       polySrc.setData({ type: 'FeatureCollection', features: [] });
       lineSrc.setData({
         type: 'Feature',
