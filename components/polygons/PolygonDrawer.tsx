@@ -29,27 +29,24 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-// Своя рисовалка полигона. Прошлая версия рисовала вершины через
-// map.addSource + circle-layer, и по неясной причине точки не появлялись,
-// хотя state обновлялся. Переписал точки на DOM-маркеры
-// (maplibregl.Marker) — это HTML-элементы, которые MapLibre сам
-// позиционирует относительно карты. Не зависят от готовности стиля,
-// source'ов, слоёв — просто работают. Линию/полигон оставил через
-// source+layer: они рисуются один раз в load-хендлере и обновляются
-// через setData на уже существующих источниках.
+// Своя рисовалка полигона. Раньше рисовали через addSource+addLayer —
+// в нашем прод-билде MapLibre эти слои не появляются (ни circle, ни
+// line, ни fill), причина не диагностирована.
 //
-// Логика:
-//  - клик по карте добавляет точку (оранжевый круг-DOM);
-//  - между точками — сплошная линия;
-//  - при замыкании — заливка полигона;
-//  - кнопки «Отменить точку», «Замкнуть» (с 3+ точками), «Начать заново».
+// Отказались от MapLibre-слоёв полностью:
+//  - вершины — DOM-маркеры (maplibregl.Marker с <div>);
+//  - линия/полигон — SVG-оверлей поверх канваса карты, пересчитываем
+//    экранные координаты через map.project() на каждом move/zoom и на
+//    каждое изменение points/closed.
+//
+// Работает независимо от WebGL-стилей MapLibre — только базовая карта
+// и API проекции lngLat→px.
 export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const [mapReady, setMapReady] = useState(false);
-  // Актуальные closed/onChange для click-хендлера, который вешается
-  // один раз (обычный state там был бы навсегда false).
+  // Актуальные closed/onChange для click-хендлера, который вешается один раз.
   const closedRef = useRef(false);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -65,6 +62,14 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
   const [closed, setClosed] = useState<boolean>(
     Boolean(initial && initial.coordinates[0]?.length >= 4),
   );
+
+  // Экранные координаты вершин в пикселях контейнера (для SVG-оверлея).
+  // Обновляются в useEffect по [points, mapReady, viewTick]; viewTick
+  // тикает на каждый move/zoom карты.
+  const [pixels, setPixels] = useState<{ x: number; y: number }[]>([]);
+  const [viewTick, setViewTick] = useState(0);
+  // Размер контейнера — нужен для viewBox у SVG.
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
   // Инициализируем карту один раз.
   useEffect(() => {
@@ -85,7 +90,6 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       center,
       zoom,
       attributionControl: { compact: true },
-      // Двойной клик не зумит — иначе быстрая расстановка сбоила бы.
       doubleClickZoom: false,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
@@ -93,54 +97,16 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
 
     mapRef.current = map;
 
+    const updateSize = () => {
+      const c = containerRef.current;
+      if (c) setSize({ w: c.clientWidth, h: c.clientHeight });
+    };
+
     map.on('load', () => {
       if (initial && initial.coordinates[0]?.length >= 4) {
         const coords = initial.coordinates[0] as [number, number][];
         map.fitBounds(polygonBounds(coords), { padding: 40, animate: false });
       }
-
-      // Пустые источники под линию и полигон.
-      map.addSource('drawer-poly', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
-      map.addSource('drawer-line', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
-
-      // Явно указываем layout.visibility, чтобы MapLibre не пропустил
-      // paint при пустом источнике. Без него у нас были случаи, когда
-      // layer не появлялся после setData().
-      map.addLayer({
-        id: 'drawer-poly-fill',
-        type: 'fill',
-        source: 'drawer-poly',
-        layout: { visibility: 'visible' },
-        paint: {
-          'fill-color': COLORS.header,
-          'fill-opacity': 0.2,
-          'fill-outline-color': COLORS.header,
-        },
-      });
-      map.addLayer({
-        id: 'drawer-poly-line',
-        type: 'line',
-        source: 'drawer-poly',
-        layout: { visibility: 'visible', 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': COLORS.header, 'line-width': 3 },
-      });
-      map.addLayer({
-        id: 'drawer-line-preview',
-        type: 'line',
-        source: 'drawer-line',
-        layout: { visibility: 'visible', 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': COLORS.header,
-          'line-width': 3,
-          'line-dasharray': [2, 1.5],
-        },
-      });
 
       map.on('click', (e) => {
         if (closedRef.current) return;
@@ -149,11 +115,18 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
 
       map.getCanvas().style.cursor = 'crosshair';
 
+      updateSize();
       setMapReady(true);
     });
 
+    // На любое движение/зум/ресайз — просто тикаем viewTick, useMemo
+    // ниже пересчитает пиксели с актуальной проекцией.
+    map.on('move', () => {
+      updateSize();
+      setViewTick((v) => v + 1);
+    });
+
     return () => {
-      // Убираем все DOM-маркеры перед уничтожением карты.
       for (const m of markersRef.current) m.remove();
       markersRef.current = [];
       map.remove();
@@ -166,18 +139,14 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
     closedRef.current = closed;
   }, [closed]);
 
-  // Пере-рендер маркеров вершин через DOM. Полностью пересоздаём —
-  // список маленький, оптимизация не нужна, зато нет рассинхрона
-  // «где-то остался старый маркер».
+  // Пере-рендер DOM-маркеров вершин.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
-    // Снести старые маркеры.
     for (const m of markersRef.current) m.remove();
     markersRef.current = [];
 
-    // Поставить новые — обычный HTML-круг с рамкой.
     points.forEach((coord, i) => {
       const el = document.createElement('div');
       el.setAttribute('data-drawer-vertex-index', String(i));
@@ -188,9 +157,6 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
       el.style.border = '2px solid #ffffff';
       el.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
       el.style.cursor = 'default';
-      // pointerEvents:none — чтобы клик по маркеру не блокировал клик
-      // по карте (иначе рядом с существующей точкой нельзя было бы
-      // поставить следующую).
       el.style.pointerEvents = 'none';
 
       const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
@@ -200,67 +166,69 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
     });
   }, [points, mapReady]);
 
-  // Пере-setData для линии и полигона. Всегда оборачиваем в
-  // FeatureCollection — с одиночной Feature у некоторых версий MapLibre
-  // paint не триггерился. После setData зовём triggerRepaint(), чтобы
-  // WebGL точно перерисовал канвас.
+  // Пересчёт пиксельных координат: триггерится добавлением точки,
+  // сменой viewTick (move/zoom), готовностью карты. setState в effect
+  // тут по существу нужен — pixels зависит от НЕреактивного map.project,
+  // без него SVG не пересчитается при движении карты.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const lineSrc = map.getSource('drawer-line') as maplibregl.GeoJSONSource | undefined;
-    const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
-    if (!lineSrc || !polySrc) return;
+    if (!points.length) {
+      setPixels([]);
+      return;
+    }
+    setPixels(points.map(([lng, lat]) => map.project([lng, lat])));
+  }, [points, mapReady, viewTick]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-    const emptyFC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
-
+  // Оповещаем родителя о готовом полигоне.
+  useEffect(() => {
     if (closed && points.length >= 3) {
       const ring = [...points, points[0]];
-      polySrc.setData({
-        type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            geometry: { type: 'Polygon', coordinates: [ring] },
-            properties: {},
-          },
-        ],
-      });
-      lineSrc.setData(emptyFC);
       onChangeRef.current({ type: 'Polygon', coordinates: [ring] });
-    } else if (points.length >= 2) {
-      polySrc.setData(emptyFC);
-      lineSrc.setData({
-        type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: points },
-            properties: {},
-          },
-        ],
-      });
-      onChangeRef.current(null);
     } else {
-      polySrc.setData(emptyFC);
-      lineSrc.setData(emptyFC);
       onChangeRef.current(null);
     }
-
-    // Форсируем redraw — иначе на некоторых билдах MapLibre WebGL
-    // канвас перерисовывается только по событиям карты (move/zoom).
-    map.triggerRepaint();
-  }, [points, closed, mapReady]);
+  }, [points, closed]);
 
   const canClose = points.length >= 3 && !closed;
   const canUndo = points.length > 0 && !closed;
   const canReset = points.length > 0;
 
+  // SVG-путь: замкнутый (Z) когда closed, иначе ломаная.
+  const pathD = pixels.length
+    ? pixels.reduce(
+        (acc, p, i) => `${acc}${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)} `,
+        '',
+      ) + (closed && pixels.length >= 3 ? 'Z' : '')
+    : '';
+
   return (
     <div className="flex flex-col gap-2">
-      <div
-        ref={containerRef}
-        className="h-[400px] w-full rounded-md border border-gray-300"
-      />
+      <div ref={containerRef} className="relative h-[400px] w-full rounded-md border border-gray-300 overflow-hidden">
+        {/* SVG-оверлей поверх карты. pointer-events:none — клики уходят
+            на карту. Обновляется каждый рендер через pixels. */}
+        {mapReady && pixels.length >= 2 ? (
+          <svg
+            className="pointer-events-none absolute inset-0 z-[5]"
+            width={size.w}
+            height={size.h}
+            viewBox={`0 0 ${size.w} ${size.h}`}
+          >
+            <path
+              d={pathD}
+              fill={closed && pixels.length >= 3 ? COLORS.header : 'none'}
+              fillOpacity={closed && pixels.length >= 3 ? 0.2 : 0}
+              stroke={COLORS.header}
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={closed ? undefined : '6 4'}
+            />
+          </svg>
+        ) : null}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
