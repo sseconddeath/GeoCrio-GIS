@@ -56,7 +56,8 @@ interface MapViewProps {
   previewLat?: number | null;
   onMapClick?: (lng: number, lat: number) => void;
   onFeatureClick?: (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => void;
-  onCursorMove?: (lng: number, lat: number) => void;
+  // onCursorMove: удалён — координаты курсора теперь обновляются
+  // прямым DOM-текстом внутри MapView, без прокидывания наверх.
   // Центр карты меняется при движении — передаём наверх, чтобы FAB
   // «+ Добавить» знал, куда ставить координаты по умолчанию.
   onViewChange?: (lng: number, lat: number) => void;
@@ -93,7 +94,6 @@ export function MapView({
   previewLat,
   onMapClick,
   onFeatureClick,
-  onCursorMove,
   onViewChange,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -104,16 +104,23 @@ export function MapView({
   const markersRef = useRef<maplibregl.Marker[]>([]);
   // Одиночный маркер-превью для click-to-place.
   const previewMarkerRef = useRef<maplibregl.Marker | null>(null);
+  // SVG-оверлей границы полигона и его path — обновляем прямо через
+  // DOM-ref, чтобы НЕ гнать через React reconciliation на каждом move.
+  // Раньше был setState → каскад re-render'ов → лаги при близком зуме.
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const pathRef = useRef<SVGPathElement | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  // Текст координат курсора — тоже прямой DOM-update, чтобы mousemove
+  // (десятки раз в секунду) не тянул перерисовку интерфейса.
+  const cursorRef = useRef<HTMLDivElement | null>(null);
   const [mapReady, setMapReady] = useState(false);
   // Храним callbacks в ref, чтобы не пересоздавать карту при их изменении.
   const onMapClickRef = useRef(onMapClick);
   const onFeatureClickRef = useRef(onFeatureClick);
-  const onCursorMoveRef = useRef(onCursorMove);
   const onViewChangeRef = useRef(onViewChange);
   useEffect(() => {
     onMapClickRef.current = onMapClick;
     onFeatureClickRef.current = onFeatureClick;
-    onCursorMoveRef.current = onCursorMove;
     onViewChangeRef.current = onViewChange;
   });
 
@@ -125,13 +132,10 @@ export function MapView({
     Array.isArray(polygon.boundary_geojson.coordinates?.[0])
       ? (polygon.boundary_geojson.coordinates[0] as [number, number][])
       : [];
-
-  // SVG-оверлей поверх канваса карты для границы полигона: слой fill/line
-  // в MapLibre в нашей связке иногда молча не рендерится. SVG работает
-  // всегда — проецируем каждую вершину через map.project() и
-  // пересчитываем на move/zoom.
-  const [boundaryPixels, setBoundaryPixels] = useState<{ x: number; y: number }[]>([]);
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const boundaryCoordsRef = useRef<[number, number][]>(boundaryCoords);
+  useEffect(() => {
+    boundaryCoordsRef.current = boundaryCoords;
+  });
 
   // Init/destroy — только один раз за монтирование компонента.
   useEffect(() => {
@@ -148,29 +152,39 @@ export function MapView({
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
-    const updateSize = () => {
-      const c = containerRef.current;
-      if (c) {
-        setSize((prev) =>
-          prev.w === c.clientWidth && prev.h === c.clientHeight
-            ? prev
-            : { w: c.clientWidth, h: c.clientHeight },
-        );
-      }
-    };
-    // Throttle через rAF — MapLibre фаерит move до 60 раз/сек, без
-    // throttle setState вызывал бы каскад re-render'ов и лаги при зуме.
+    // Throttle через rAF — MapLibre фаерит move до 60 раз/сек. Обновляем
+    // SVG-путь ПРЯМО через DOM-ref, без setState/React reconcile.
     let rafId: number | null = null;
-    const recomputeBoundaryPixels = () => {
+    const redrawBoundary = () => {
       if (rafId != null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        updateSize();
-        if (!boundaryCoords.length) {
-          setBoundaryPixels((prev) => (prev.length === 0 ? prev : []));
+        const svg = svgRef.current;
+        const path = pathRef.current;
+        const container = containerRef.current;
+        if (!svg || !path || !container) return;
+
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        // Актуальный размер SVG — если контейнер отресайзился.
+        if (svg.getAttribute('width') !== String(w)) svg.setAttribute('width', String(w));
+        if (svg.getAttribute('height') !== String(h)) svg.setAttribute('height', String(h));
+
+        const coords = boundaryCoordsRef.current;
+        if (coords.length < 3) {
+          path.setAttribute('d', '');
           return;
         }
-        setBoundaryPixels(boundaryCoords.map(([lng, lat]) => map.project([lng, lat])));
+
+        // Собираем path строкой без React. При очень близком зуме
+        // вершины уезжают на миллионы пикселей, но SVG сам это стерпит.
+        let d = '';
+        for (let i = 0; i < coords.length; i++) {
+          const p = map.project(coords[i] as [number, number]);
+          d += `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)} `;
+        }
+        d += 'Z';
+        path.setAttribute('d', d);
       });
     };
 
@@ -187,8 +201,12 @@ export function MapView({
         );
       }
 
-      recomputeBoundaryPixels();
-      map.on('move', recomputeBoundaryPixels);
+      redrawBoundary();
+      map.on('move', redrawBoundary);
+      // Ресайз окна тоже должен пересчитать SVG.
+      const ro = new ResizeObserver(redrawBoundary);
+      if (containerRef.current) ro.observe(containerRef.current);
+      resizeObserverRef.current = ro;
 
       // Объекты (скважины/точки) больше не рисуются MapLibre-слоями —
       // они молча не отрисовывались в нашей связке (как было и с
@@ -209,18 +227,13 @@ export function MapView({
         onMapClickRef.current?.(e.lngLat.lng, e.lngLat.lat);
       });
 
-      // Отображение координат курсора. Throttle через rAF —
-      // mousemove фаерит на каждый пиксель, без throttle setState в
-      // MapWorkspace вызывал бы каскад re-render'ов интерфейса.
-      let mmRaf: number | null = null;
-      let lastMm: MapMoveEv | null = null;
+      // Координаты курсора: обновляем прямо в textContent через ref,
+      // без setState (иначе mousemove тянул бы re-render всего
+      // MapWorkspace на каждый пиксель).
       map.on('mousemove', (e: MapMoveEv) => {
-        lastMm = e;
-        if (mmRaf != null) return;
-        mmRaf = requestAnimationFrame(() => {
-          mmRaf = null;
-          if (lastMm) onCursorMoveRef.current?.(lastMm.lngLat.lng, lastMm.lngLat.lat);
-        });
+        if (cursorRef.current) {
+          cursorRef.current.textContent = `${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}`;
+        }
       });
       setMapReady(true);
 
@@ -236,6 +249,8 @@ export function MapView({
 
     return () => {
       if (rafId != null) cancelAnimationFrame(rafId);
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
       for (const m of markersRef.current) m.remove();
       markersRef.current = [];
       previewMarkerRef.current?.remove();
@@ -247,8 +262,13 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polygon.id]);
 
-  // Видимость границы регулируется рендером SVG-оверлея ниже
-  // (showPolygonBoundary && boundaryPixels.length >= 3).
+  // Видимость границы — прямым style.display, чтобы не пересобирать
+  // SVG при переключении чекбокса «Граница полигона» в LayerPanel.
+  useEffect(() => {
+    if (svgRef.current) {
+      svgRef.current.style.display = showPolygonBoundary ? 'block' : 'none';
+    }
+  }, [showPolygonBoundary]);
 
   // Превью-маркер для click-to-place: пульсирующий круг на месте,
   // куда встанет создаваемая скважина/точка. Двигается при клике по карте.
@@ -317,34 +337,34 @@ export function MapView({
     }
   }, [objects, colorMode, mapReady]);
 
-  // Path для SVG-оверлея границы полигона: M x,y L x,y ... Z.
-  const boundaryPath = boundaryPixels.length
-    ? boundaryPixels.reduce(
-        (acc, p, i) => `${acc}${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)} `,
-        '',
-      ) + 'Z'
-    : '';
-
   return (
     <div ref={containerRef} className="relative h-full w-full">
-      {showPolygonBoundary && boundaryPixels.length >= 3 ? (
-        <svg
-          className="pointer-events-none absolute inset-0 z-[5]"
-          width={size.w}
-          height={size.h}
-          viewBox={`0 0 ${size.w} ${size.h}`}
-        >
-          <path
-            d={boundaryPath}
-            fill={COLORS.header}
-            fillOpacity={0.06}
-            stroke={COLORS.header}
-            strokeWidth={2}
-            strokeDasharray="6 4"
-            strokeLinejoin="round"
-          />
-        </svg>
-      ) : null}
+      {/* SVG рисуется один раз при монтировании; path обновляется через
+          ref в rAF-цикле — React в hot path не участвует. Видимость
+          управляется прямым style.display через отдельный useEffect. */}
+      <svg
+        ref={svgRef}
+        className="pointer-events-none absolute inset-0 z-[5]"
+        aria-hidden
+        style={{ display: showPolygonBoundary ? 'block' : 'none' }}
+      >
+        <path
+          ref={pathRef}
+          d=""
+          fill={COLORS.header}
+          fillOpacity={0.06}
+          stroke={COLORS.header}
+          strokeWidth={2}
+          strokeDasharray="6 4"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {/* Координаты курсора — только на десктопе. Обновляются через
+          cursorRef.textContent в mousemove-хендлере, без React. */}
+      <div
+        ref={cursorRef}
+        className="pointer-events-none absolute bottom-2 right-2 hidden rounded bg-white/80 px-2 py-1 font-mono text-xs text-gray-600 shadow md:block"
+      />
     </div>
   );
 }

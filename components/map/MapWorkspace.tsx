@@ -30,7 +30,6 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
     GeoJSON.Feature<GeoJSON.Point, MapObjectProperties> | null
   >(null);
   const [addAt, setAddAt] = useState<{ lng: number; lat: number } | null>(null);
-  const [cursor, setCursor] = useState<{ lng: number; lat: number } | null>(null);
   const [viewCenter, setViewCenter] = useState<{ lng: number; lat: number }>({
     lng: polygon.center_lng,
     lat: polygon.center_lat,
@@ -114,7 +113,6 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           previewLat={addAt?.lat ?? null}
           onFeatureClick={handleFeatureClick}
           onMapClick={handleMapClick}
-          onCursorMove={(lng, lat) => setCursor({ lng, lat })}
           onViewChange={(lng, lat) => setViewCenter({ lng, lat })}
         />
 
@@ -168,12 +166,8 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           </div>
         ) : null}
 
-        {/* Координаты курсора — только на десктопе (у мобилки нет мыши). */}
-        {cursor ? (
-          <div className="pointer-events-none absolute bottom-2 right-2 hidden rounded bg-white/80 px-2 py-1 font-mono text-xs text-gray-600 shadow md:block">
-            {cursor.lat.toFixed(5)}, {cursor.lng.toFixed(5)}
-          </div>
-        ) : null}
+        {/* Координаты курсора теперь рендерятся внутри MapView — там
+            текст обновляется через ref без React re-render'а на mousemove. */}
       </div>
     </div>
   );
