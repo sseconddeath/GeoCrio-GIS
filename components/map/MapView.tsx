@@ -2,7 +2,7 @@
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as maplibregl from 'maplibre-gl';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type MapLibreMap = maplibregl.Map;
 import { COLORS } from '@/lib/constants';
@@ -106,6 +106,22 @@ export function MapView({
     onViewChangeRef.current = onViewChange;
   });
 
+  // Валидная граница полигона в виде GeoJSON.Polygon. Если PostgREST не
+  // прислал boundary_geojson (например, миграция 012 ещё не применена
+  // на проекте), рисовать нечего — fallback на пустой массив.
+  const boundaryCoords: [number, number][] =
+    polygon.boundary_geojson &&
+    Array.isArray(polygon.boundary_geojson.coordinates?.[0])
+      ? (polygon.boundary_geojson.coordinates[0] as [number, number][])
+      : [];
+
+  // SVG-оверлей поверх канваса карты для границы полигона: слой fill/line
+  // в MapLibre в нашей связке иногда молча не рендерится. SVG работает
+  // всегда — проецируем каждую вершину через map.project() и
+  // пересчитываем на move/zoom.
+  const [boundaryPixels, setBoundaryPixels] = useState<{ x: number; y: number }[]>([]);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
   // Init/destroy — только один раз за монтирование компонента.
   useEffect(() => {
     if (!containerRef.current) return;
@@ -121,33 +137,34 @@ export function MapView({
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
-    map.on('load', () => {
-      // Штриховая граница полигона (раздел 7.1 ТЗ).
-      map.addSource('polygon-boundary', {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: polygon.boundary_geojson, properties: {} },
-      });
-      map.addLayer({
-        id: 'polygon-boundary-fill',
-        type: 'fill',
-        source: 'polygon-boundary',
-        paint: { 'fill-color': COLORS.header, 'fill-opacity': 0.03 },
-      });
-      map.addLayer({
-        id: 'polygon-boundary-line',
-        type: 'line',
-        source: 'polygon-boundary',
-        paint: {
-          'line-color': COLORS.header,
-          'line-width': 2,
-          'line-dasharray': [3, 2],
-        },
-      });
+    const updateSize = () => {
+      const c = containerRef.current;
+      if (c) setSize({ w: c.clientWidth, h: c.clientHeight });
+    };
+    const recomputeBoundaryPixels = () => {
+      updateSize();
+      if (!boundaryCoords.length) {
+        setBoundaryPixels([]);
+        return;
+      }
+      setBoundaryPixels(boundaryCoords.map(([lng, lat]) => map.project([lng, lat])));
+    };
 
-      // Bounding box полигона + небольшой padding.
-      const coords = polygon.boundary_geojson.coordinates[0] as [number, number][];
-      const [sw, ne] = polygonBounds(coords);
-      map.fitBounds([sw, ne], { padding: 40, animate: false, maxZoom: polygon.default_zoom + 2 });
+    map.on('load', () => {
+      // Bounding box полигона + небольшой padding. Только если граница
+      // валидная — иначе оставляем centered на polygon.center_lng/lat.
+      if (boundaryCoords.length >= 3) {
+        const [sw, ne] = polygonBounds(boundaryCoords);
+        map.fitBounds([sw, ne], { padding: 40, animate: false, maxZoom: polygon.default_zoom + 2 });
+      } else {
+        console.warn(
+          '[MapView] polygon.boundary_geojson отсутствует — граница не будет отображена. Убедитесь, что миграция 012 применена.',
+          { polygonId: polygon.id, boundary_geojson: polygon.boundary_geojson },
+        );
+      }
+
+      recomputeBoundaryPixels();
+      map.on('move', recomputeBoundaryPixels);
 
       // Кластеризованный source для всех объектов карты.
       map.addSource('objects', {
@@ -303,19 +320,8 @@ export function MapView({
     else map.once('load', apply);
   }, [objects]);
 
-  // Переключение видимости границы полигона.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const apply = () => {
-      const value: 'visible' | 'none' = showPolygonBoundary ? 'visible' : 'none';
-      for (const id of ['polygon-boundary-fill', 'polygon-boundary-line']) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', value);
-      }
-    };
-    if (map.isStyleLoaded()) apply();
-    else map.once('load', apply);
-  }, [showPolygonBoundary]);
+  // Видимость границы теперь регулируется рендером SVG-оверлея ниже
+  // (showPolygonBoundary && boundaryPixels.length >= 3).
 
   // Смена цвета маркеров при переключении режима — без пересоздания карты.
   useEffect(() => {
@@ -330,5 +336,34 @@ export function MapView({
     else map.once('load', apply);
   }, [colorMode]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  // Path для SVG-оверлея границы полигона: M x,y L x,y ... Z.
+  const boundaryPath = boundaryPixels.length
+    ? boundaryPixels.reduce(
+        (acc, p, i) => `${acc}${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)} `,
+        '',
+      ) + 'Z'
+    : '';
+
+  return (
+    <div ref={containerRef} className="relative h-full w-full">
+      {showPolygonBoundary && boundaryPixels.length >= 3 ? (
+        <svg
+          className="pointer-events-none absolute inset-0 z-[5]"
+          width={size.w}
+          height={size.h}
+          viewBox={`0 0 ${size.w} ${size.h}`}
+        >
+          <path
+            d={boundaryPath}
+            fill={COLORS.header}
+            fillOpacity={0.06}
+            stroke={COLORS.header}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : null}
+    </div>
+  );
 }
