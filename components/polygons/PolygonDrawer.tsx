@@ -109,26 +109,36 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
         data: { type: 'FeatureCollection', features: [] },
       });
 
+      // Явно указываем layout.visibility, чтобы MapLibre не пропустил
+      // paint при пустом источнике. Без него у нас были случаи, когда
+      // layer не появлялся после setData().
       map.addLayer({
         id: 'drawer-poly-fill',
         type: 'fill',
         source: 'drawer-poly',
-        paint: { 'fill-color': COLORS.header, 'fill-opacity': 0.15 },
+        layout: { visibility: 'visible' },
+        paint: {
+          'fill-color': COLORS.header,
+          'fill-opacity': 0.2,
+          'fill-outline-color': COLORS.header,
+        },
       });
       map.addLayer({
         id: 'drawer-poly-line',
         type: 'line',
         source: 'drawer-poly',
-        paint: { 'line-color': COLORS.header, 'line-width': 2 },
+        layout: { visibility: 'visible', 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': COLORS.header, 'line-width': 3 },
       });
       map.addLayer({
         id: 'drawer-line-preview',
         type: 'line',
         source: 'drawer-line',
+        layout: { visibility: 'visible', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-color': COLORS.header,
-          'line-width': 2,
-          'line-dasharray': [3, 2],
+          'line-width': 3,
+          'line-dasharray': [2, 1.5],
         },
       });
 
@@ -190,7 +200,10 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
     });
   }, [points, mapReady]);
 
-  // Пере-setData для линии и полигона.
+  // Пере-setData для линии и полигона. Всегда оборачиваем в
+  // FeatureCollection — с одиночной Feature у некоторых версий MapLibre
+  // paint не триггерился. После setData зовём triggerRepaint(), чтобы
+  // WebGL точно перерисовал канвас.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -198,30 +211,44 @@ export function PolygonDrawer({ initial, onChange }: PolygonDrawerProps) {
     const polySrc = map.getSource('drawer-poly') as maplibregl.GeoJSONSource | undefined;
     if (!lineSrc || !polySrc) return;
 
+    const emptyFC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+
     if (closed && points.length >= 3) {
+      const ring = [...points, points[0]];
       polySrc.setData({
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
-        properties: {},
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [ring] },
+            properties: {},
+          },
+        ],
       });
-      lineSrc.setData({ type: 'FeatureCollection', features: [] });
-      onChangeRef.current({
-        type: 'Polygon',
-        coordinates: [[...points, points[0]]],
-      });
+      lineSrc.setData(emptyFC);
+      onChangeRef.current({ type: 'Polygon', coordinates: [ring] });
     } else if (points.length >= 2) {
-      polySrc.setData({ type: 'FeatureCollection', features: [] });
+      polySrc.setData(emptyFC);
       lineSrc.setData({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: points },
-        properties: {},
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: points },
+            properties: {},
+          },
+        ],
       });
       onChangeRef.current(null);
     } else {
-      polySrc.setData({ type: 'FeatureCollection', features: [] });
-      lineSrc.setData({ type: 'FeatureCollection', features: [] });
+      polySrc.setData(emptyFC);
+      lineSrc.setData(emptyFC);
       onChangeRef.current(null);
     }
+
+    // Форсируем redraw — иначе на некоторых билдах MapLibre WebGL
+    // канвас перерисовывается только по событиям карты (move/zoom).
+    map.triggerRepaint();
   }, [points, closed, mapReady]);
 
   const canClose = points.length >= 3 && !closed;
