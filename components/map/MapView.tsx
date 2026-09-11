@@ -283,20 +283,33 @@ export function MapView({
     }
 
     if (!previewMarkerRef.current) {
-      const el = document.createElement('div');
-      el.style.width = '22px';
-      el.style.height = '22px';
-      el.style.borderRadius = '50%';
-      el.style.backgroundColor = COLORS.borehole;
-      el.style.border = '3px solid #ffffff';
-      el.style.boxShadow = `0 0 0 3px ${COLORS.borehole}66, 0 2px 6px rgba(0,0,0,0.4)`;
-      el.style.pointerEvents = 'none';
-      // Пульсация — заметнее среди других маркеров.
-      el.style.animation = 'mv-pulse 1.4s ease-in-out infinite';
+      // MapLibre выставляет transform: translate(...) на самом элементе
+      // маркера. Если сюда же поставить animation с transform: scale(),
+      // MapLibre-перевод стирается и маркер оказывается в (0,0) — юзер
+      // его не видит. Разделяем: внешний div MapLibre двигает, внутренний
+      // pulse-div свободно крутит свою scale-анимацию.
+      const outer = document.createElement('div');
+      outer.style.width = '22px';
+      outer.style.height = '22px';
+      outer.style.pointerEvents = 'none';
+
+      const pulse = document.createElement('div');
+      pulse.style.width = '100%';
+      pulse.style.height = '100%';
+      pulse.style.borderRadius = '50%';
+      pulse.style.backgroundColor = COLORS.borehole;
+      pulse.style.border = '3px solid #ffffff';
+      pulse.style.boxShadow = `0 0 0 3px ${COLORS.borehole}66, 0 2px 6px rgba(0,0,0,0.4)`;
+      pulse.style.animation = 'mv-pulse 1.4s ease-in-out infinite';
+      pulse.style.transformOrigin = 'center';
+      outer.appendChild(pulse);
+
       previewMarkerRef.current = new maplibregl.Marker({
-        element: el,
+        element: outer,
         anchor: 'center',
-      }).setLngLat([previewLng, previewLat]).addTo(map);
+      })
+        .setLngLat([previewLng, previewLat])
+        .addTo(map);
     } else {
       previewMarkerRef.current.setLngLat([previewLng, previewLat]);
     }
