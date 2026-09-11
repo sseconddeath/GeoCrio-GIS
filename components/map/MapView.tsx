@@ -50,6 +50,10 @@ interface MapViewProps {
   // инсайт: где мёрзлый грунт, где талый, где переход). Для точек
   // наблюдений (permafrost_status = null) — серый.
   colorMode?: MapColorMode;
+  // Превью-точка для click-to-place: пока панель добавления открыта,
+  // ставим анимированный маркер, чтобы юзер видел, куда попадёт.
+  previewLng?: number | null;
+  previewLat?: number | null;
   onMapClick?: (lng: number, lat: number) => void;
   onFeatureClick?: (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => void;
   onCursorMove?: (lng: number, lat: number) => void;
@@ -85,6 +89,8 @@ export function MapView({
   objects,
   showPolygonBoundary = true,
   colorMode = 'type',
+  previewLng,
+  previewLat,
   onMapClick,
   onFeatureClick,
   onCursorMove,
@@ -96,6 +102,8 @@ export function MapView({
   // не работающие в нашей связке MapLibre circle-слои. Обновляются
   // отдельным useEffect по [objects, colorMode, mapReady].
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  // Одиночный маркер-превью для click-to-place.
+  const previewMarkerRef = useRef<maplibregl.Marker | null>(null);
   const [mapReady, setMapReady] = useState(false);
   // Храним callbacks в ref, чтобы не пересоздавать карту при их изменении.
   const onMapClickRef = useRef(onMapClick);
@@ -142,15 +150,28 @@ export function MapView({
 
     const updateSize = () => {
       const c = containerRef.current;
-      if (c) setSize({ w: c.clientWidth, h: c.clientHeight });
-    };
-    const recomputeBoundaryPixels = () => {
-      updateSize();
-      if (!boundaryCoords.length) {
-        setBoundaryPixels([]);
-        return;
+      if (c) {
+        setSize((prev) =>
+          prev.w === c.clientWidth && prev.h === c.clientHeight
+            ? prev
+            : { w: c.clientWidth, h: c.clientHeight },
+        );
       }
-      setBoundaryPixels(boundaryCoords.map(([lng, lat]) => map.project([lng, lat])));
+    };
+    // Throttle через rAF — MapLibre фаерит move до 60 раз/сек, без
+    // throttle setState вызывал бы каскад re-render'ов и лаги при зуме.
+    let rafId: number | null = null;
+    const recomputeBoundaryPixels = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        updateSize();
+        if (!boundaryCoords.length) {
+          setBoundaryPixels((prev) => (prev.length === 0 ? prev : []));
+          return;
+        }
+        setBoundaryPixels(boundaryCoords.map(([lng, lat]) => map.project([lng, lat])));
+      });
     };
 
     map.on('load', () => {
@@ -188,9 +209,18 @@ export function MapView({
         onMapClickRef.current?.(e.lngLat.lng, e.lngLat.lat);
       });
 
-      // Отображение координат курсора наверху.
+      // Отображение координат курсора. Throttle через rAF —
+      // mousemove фаерит на каждый пиксель, без throttle setState в
+      // MapWorkspace вызывал бы каскад re-render'ов интерфейса.
+      let mmRaf: number | null = null;
+      let lastMm: MapMoveEv | null = null;
       map.on('mousemove', (e: MapMoveEv) => {
-        onCursorMoveRef.current?.(e.lngLat.lng, e.lngLat.lat);
+        lastMm = e;
+        if (mmRaf != null) return;
+        mmRaf = requestAnimationFrame(() => {
+          mmRaf = null;
+          if (lastMm) onCursorMoveRef.current?.(lastMm.lngLat.lng, lastMm.lngLat.lat);
+        });
       });
       setMapReady(true);
 
@@ -205,8 +235,11 @@ export function MapView({
     });
 
     return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
       for (const m of markersRef.current) m.remove();
       markersRef.current = [];
+      previewMarkerRef.current?.remove();
+      previewMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -216,6 +249,38 @@ export function MapView({
 
   // Видимость границы регулируется рендером SVG-оверлея ниже
   // (showPolygonBoundary && boundaryPixels.length >= 3).
+
+  // Превью-маркер для click-to-place: пульсирующий круг на месте,
+  // куда встанет создаваемая скважина/точка. Двигается при клике по карте.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (previewLng == null || previewLat == null) {
+      previewMarkerRef.current?.remove();
+      previewMarkerRef.current = null;
+      return;
+    }
+
+    if (!previewMarkerRef.current) {
+      const el = document.createElement('div');
+      el.style.width = '22px';
+      el.style.height = '22px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = COLORS.borehole;
+      el.style.border = '3px solid #ffffff';
+      el.style.boxShadow = `0 0 0 3px ${COLORS.borehole}66, 0 2px 6px rgba(0,0,0,0.4)`;
+      el.style.pointerEvents = 'none';
+      // Пульсация — заметнее среди других маркеров.
+      el.style.animation = 'mv-pulse 1.4s ease-in-out infinite';
+      previewMarkerRef.current = new maplibregl.Marker({
+        element: el,
+        anchor: 'center',
+      }).setLngLat([previewLng, previewLat]).addTo(map);
+    } else {
+      previewMarkerRef.current.setLngLat([previewLng, previewLat]);
+    }
+  }, [previewLng, previewLat, mapReady]);
 
   // DOM-маркеры для скважин и точек. Пересоздаём при любом изменении
   // objects или colorMode — список маленький, оптимизация не нужна.

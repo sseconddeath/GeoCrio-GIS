@@ -110,6 +110,8 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           objects={filteredObjects}
           showPolygonBoundary={visibility.polygonBoundary}
           colorMode={colorMode}
+          previewLng={addAt?.lng ?? null}
+          previewLat={addAt?.lat ?? null}
           onFeatureClick={handleFeatureClick}
           onMapClick={handleMapClick}
           onCursorMove={(lng, lat) => setCursor({ lng, lat })}

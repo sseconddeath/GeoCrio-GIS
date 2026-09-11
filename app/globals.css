@@ -31,3 +31,17 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
 }
+
+/* Пульсация для превью-маркера click-to-place на карте — обращает
+   внимание, что вот здесь встанет объект, если сохранить. */
+@keyframes mv-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.75;
+  }
+}
