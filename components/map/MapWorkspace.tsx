@@ -48,15 +48,24 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
     [objects, visibility.boreholes, visibility.observationPoints],
   );
 
-  // Клик по свободному месту карты больше НЕ открывает форму — иначе на
-  // мобилке случайный тап при попытке промотать вызывает панель добавления
-  // (проблема A4 в аудите). Теперь клик — только для попапа над маркерами;
-  // добавление объекта — через явный FAB «+».
+  // Клик по свободному месту карты — только для попапа над маркерами
+  // (проблема A4 в аудите: случайный тап на мобиле не должен открывать
+  // форму добавления). НО если панель добавления уже открыта — клик
+  // по карте обновляет координаты, чтобы поставить точку прямо на
+  // нужное место (запрос пользователя).
   const handleFeatureClick = useCallback(
     (feature: GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>) => {
       setAddAt(null);
       setSelectedFeature(feature);
       setShowSidebar(false);
+    },
+    [],
+  );
+
+  const handleMapClick = useCallback(
+    (lng: number, lat: number) => {
+      // Только когда панель добавления уже открыта — иначе игнорируем.
+      setAddAt((prev) => (prev ? { lng, lat } : prev));
     },
     [],
   );
@@ -102,6 +111,7 @@ export function MapWorkspace({ polygon, objects, stats, canWrite }: MapWorkspace
           showPolygonBoundary={visibility.polygonBoundary}
           colorMode={colorMode}
           onFeatureClick={handleFeatureClick}
+          onMapClick={handleMapClick}
           onCursorMove={(lng, lat) => setCursor({ lng, lat })}
           onViewChange={(lng, lat) => setViewCenter({ lng, lat })}
         />

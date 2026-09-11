@@ -58,28 +58,26 @@ interface MapViewProps {
   onViewChange?: (lng: number, lat: number) => void;
 }
 
-// MapLibre paint-выражение для одиночных маркеров, по режиму раскраски.
-function circleColorExpr(mode: MapColorMode): maplibregl.DataDrivenPropertyValueSpecification<string> {
+// Цвет DOM-маркера объекта по выбранному режиму раскраски.
+function colorForFeature(
+  props: MapObjectProperties,
+  mode: MapColorMode,
+): string {
   if (mode === 'type') {
-    return [
-      'case',
-      ['==', ['get', 'type'], 'borehole'],
-      COLORS.borehole,
-      COLORS.observationPoint,
-    ];
+    return props.type === 'borehole' ? COLORS.borehole : COLORS.observationPoint;
   }
-  // permafrost: match по свойству permafrost_status из map_objects view.
-  return [
-    'match',
-    ['coalesce', ['get', 'permafrost_status'], 'unknown'],
-    'frozen',
-    COLORS.permafrost.frozen,
-    'thawed',
-    COLORS.permafrost.thawed,
-    'transitional',
-    COLORS.permafrost.transitional,
-    /* default */ '#9ca3af',
-  ];
+  // permafrost: раскраска по статусу мерзлоты. Для точек наблюдений
+  // (permafrost_status = null) — серый.
+  switch (props.permafrost_status) {
+    case 'frozen':
+      return COLORS.permafrost.frozen;
+    case 'thawed':
+      return COLORS.permafrost.thawed;
+    case 'transitional':
+      return COLORS.permafrost.transitional;
+    default:
+      return '#9ca3af';
+  }
 }
 
 export function MapView({
@@ -94,6 +92,11 @@ export function MapView({
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  // DOM-маркеры объектов (скважины/точки) — заводим сами, чтобы обойти
+  // не работающие в нашей связке MapLibre circle-слои. Обновляются
+  // отдельным useEffect по [objects, colorMode, mapReady].
+  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const [mapReady, setMapReady] = useState(false);
   // Храним callbacks в ref, чтобы не пересоздавать карту при их изменении.
   const onMapClickRef = useRef(onMapClick);
   const onFeatureClickRef = useRef(onFeatureClick);
@@ -166,129 +169,30 @@ export function MapView({
       recomputeBoundaryPixels();
       map.on('move', recomputeBoundaryPixels);
 
-      // Кластеризованный source для всех объектов карты.
-      map.addSource('objects', {
-        type: 'geojson',
-        data: objects,
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 40,
-      });
+      // Объекты (скважины/точки) больше не рисуются MapLibre-слоями —
+      // они молча не отрисовывались в нашей связке (как было и с
+      // polygon-boundary). Теперь DOM-маркеры в отдельном useEffect ниже.
+      // Кластеризацию временно убрали — у одного полигона обычно < 100
+      // объектов, кластеры не нужны.
 
-      // Кластеры (круги с числом).
-      map.addLayer({
-        id: 'clusters',
-        type: 'circle',
-        source: 'objects',
-        filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': COLORS.header,
-          'circle-radius': ['step', ['get', 'point_count'], 16, 10, 20, 25, 26],
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
-      map.addLayer({
-        id: 'cluster-count',
-        type: 'symbol',
-        source: 'objects',
-        filter: ['has', 'point_count'],
-        layout: {
-          'text-field': ['get', 'point_count_abbreviated'],
-          'text-size': 12,
-        },
-        paint: { 'text-color': '#ffffff' },
-      });
-
-      // Отдельные объекты (не кластер). Цвет — по выбранному режиму
-      // (тип объекта или статус мерзлоты); paint пересобирается при
-      // смене режима отдельным useEffect ниже.
-      map.addLayer({
-        id: 'objects-unclustered',
-        type: 'circle',
-        source: 'objects',
-        filter: ['!', ['has', 'point_count']],
-        paint: {
-          'circle-color': circleColorExpr(colorMode),
-          'circle-radius': 8,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
-
-      // Смена курсора над кликабельными слоями.
-      const setPointerOn = (layerId: string) => {
-        map.on('mouseenter', layerId, () => {
-          map.getCanvas().style.cursor = 'pointer';
-        });
-        map.on('mouseleave', layerId, () => {
-          map.getCanvas().style.cursor = '';
-        });
-      };
-      setPointerOn('clusters');
-      setPointerOn('objects-unclustered');
-
-      // Локальные структурные типы: MapLibre-события MapLayerMouseEvent
-      // объявлены в самом пакете как локальные `type` без export,
-      // поэтому импортировать их напрямую нельзя. Дублируем ровно то, что
-      // используем — это узкий контракт, а не полный MapLibre-tip.
-      type LayerClickEv = {
-        features?: Array<{
-          properties?: Record<string, unknown> | null;
-          geometry: GeoJSON.Geometry;
-        }>;
-      };
       type MapClickEv = {
         lngLat: { lng: number; lat: number };
         point: maplibregl.Point;
       };
       type MapMoveEv = { lngLat: { lng: number; lat: number } };
 
-      // Клик по кластеру — приблизить.
-      map.on('click', 'clusters', (e: LayerClickEv) => {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        const clusterId = feature.properties?.cluster_id as number | undefined;
-        if (clusterId == null) return;
-        const source = map.getSource('objects') as maplibregl.GeoJSONSource;
-        source
-          .getClusterExpansionZoom(clusterId)
-          .then((zoom: number) => {
-            if (feature.geometry.type === 'Point') {
-              map.easeTo({
-                center: feature.geometry.coordinates as [number, number],
-                zoom,
-              });
-            }
-          })
-          .catch(() => {
-            // no-op
-          });
-      });
-
-      // Клик по одиночному маркеру — попап через callback (React рендерит его сам).
-      map.on('click', 'objects-unclustered', (e: LayerClickEv) => {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        onFeatureClickRef.current?.(
-          feature as unknown as GeoJSON.Feature<GeoJSON.Point, MapObjectProperties>,
-        );
-      });
-
-      // Общий клик по карте (не по объекту/кластеру) — эмиттим наверх.
+      // Клик по свободному месту карты — эмиттим наверх. Клики по
+      // самим DOM-маркерам обрабатываются отдельно на элементах
+      // (stopPropagation, чтобы не долетал сюда).
       map.on('click', (e: MapClickEv) => {
-        const hits = map.queryRenderedFeatures(e.point, {
-          layers: ['clusters', 'objects-unclustered'],
-        });
-        if (hits.length === 0) {
-          onMapClickRef.current?.(e.lngLat.lng, e.lngLat.lat);
-        }
+        onMapClickRef.current?.(e.lngLat.lng, e.lngLat.lat);
       });
 
       // Отображение координат курсора наверху.
       map.on('mousemove', (e: MapMoveEv) => {
         onCursorMoveRef.current?.(e.lngLat.lng, e.lngLat.lat);
       });
+      setMapReady(true);
 
       // Центр карты — для FAB «+ Добавить». Эмиттим при загрузке и при
       // каждой остановке движения (moveend).
@@ -301,6 +205,8 @@ export function MapView({
     });
 
     return () => {
+      for (const m of markersRef.current) m.remove();
+      markersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
@@ -308,33 +214,43 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polygon.id]);
 
-  // Обновление данных источника при изменении objects — без пересоздания карты.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const apply = () => {
-      const source = map.getSource('objects') as maplibregl.GeoJSONSource | undefined;
-      if (source) source.setData(objects);
-    };
-    if (map.isStyleLoaded()) apply();
-    else map.once('load', apply);
-  }, [objects]);
-
-  // Видимость границы теперь регулируется рендером SVG-оверлея ниже
+  // Видимость границы регулируется рендером SVG-оверлея ниже
   // (showPolygonBoundary && boundaryPixels.length >= 3).
 
-  // Смена цвета маркеров при переключении режима — без пересоздания карты.
+  // DOM-маркеры для скважин и точек. Пересоздаём при любом изменении
+  // objects или colorMode — список маленький, оптимизация не нужна.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    const apply = () => {
-      if (map.getLayer('objects-unclustered')) {
-        map.setPaintProperty('objects-unclustered', 'circle-color', circleColorExpr(colorMode));
-      }
-    };
-    if (map.isStyleLoaded()) apply();
-    else map.once('load', apply);
-  }, [colorMode]);
+    if (!map || !mapReady) return;
+
+    for (const m of markersRef.current) m.remove();
+    markersRef.current = [];
+
+    for (const feature of objects.features) {
+      const color = colorForFeature(feature.properties, colorMode);
+      const el = document.createElement('div');
+      el.style.width = '18px';
+      el.style.height = '18px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = color;
+      el.style.border = '2px solid #ffffff';
+      el.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)';
+      el.style.cursor = 'pointer';
+      el.title = feature.properties.name;
+      // stopPropagation — иначе клик долетит до карты и сработает
+      // onMapClick, закрывающий/меняющий состояние.
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onFeatureClickRef.current?.(feature);
+      });
+
+      const coords = feature.geometry.coordinates as [number, number];
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat(coords)
+        .addTo(map);
+      markersRef.current.push(marker);
+    }
+  }, [objects, colorMode, mapReady]);
 
   // Path для SVG-оверлея границы полигона: M x,y L x,y ... Z.
   const boundaryPath = boundaryPixels.length

@@ -33,11 +33,16 @@ export function AddObjectPanel({ polygonId, lng, lat, onClose }: AddObjectPanelP
         <div className="h-1 w-10 rounded-full bg-gray-300" />
       </div>
       <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-        <div className="text-sm font-semibold text-gray-900">Добавить объект</div>
+        <div>
+          <div className="text-sm font-semibold text-gray-900">Добавить объект</div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500">
+            Кликните по карте, чтобы поставить точку прямо на скважину — координаты обновятся.
+          </div>
+        </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="ml-2 shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           aria-label="Закрыть"
         >
           X

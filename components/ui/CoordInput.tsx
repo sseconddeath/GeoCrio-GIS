@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatAccuracy, normalizeCoordInput } from '@/lib/coords';
 
 interface CoordInputProps {
@@ -37,6 +37,25 @@ export function CoordInput({
   const [gpsPending, setGpsPending] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
+
+  // Синхронизация: родитель может передать новые initialLat/Lng (например,
+  // пользователь кликнул по карте, чтобы уточнить точку) — подхватываем
+  // и переписываем поля. GPS-accuracy при этом сбрасываем, чтобы
+  // старая точность не вводила в заблуждение.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (initialLat != null) {
+      setLat(String(initialLat));
+      setAccuracy(null);
+    }
+  }, [initialLat]);
+  useEffect(() => {
+    if (initialLng != null) {
+      setLng(String(initialLng));
+      setAccuracy(null);
+    }
+  }, [initialLng]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const setLatValue = (raw: string) => {
     const norm = normalizeCoordInput(raw);
