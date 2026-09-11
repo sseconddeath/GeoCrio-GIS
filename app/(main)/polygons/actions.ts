@@ -12,6 +12,11 @@ export interface PolygonActionState {
   error?: string;
   success?: string;
   fieldErrors?: Record<string, string>;
+  // URL для клиентской навигации: server-action возвращает его вместо
+  // прямого redirect(), потому что в React 19 / Next 16 redirect из
+  // action не всегда пропагирует в браузер. Клиент видит это поле в
+  // useActionState и делает router.push().
+  redirectTo?: string;
 }
 
 export interface InviteActionState {
@@ -64,10 +69,13 @@ export async function createPolygonAction(
   _prev: PolygonActionState,
   fd: FormData,
 ): Promise<PolygonActionState> {
+  console.log('[createPolygonAction] called');
   const parsed = polygonSchema.safeParse(readFormData(fd));
-  if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
+  if (!parsed.success) {
+    console.log('[createPolygonAction] validation failed:', parsed.error.issues);
+    return { fieldErrors: fieldErrorsFrom(parsed.error) };
+  }
 
-  let newId: string;
   try {
     const supabase = await createClient();
     const {
@@ -76,6 +84,12 @@ export async function createPolygonAction(
     if (!user) return { error: 'Требуется вход в систему' };
 
     const { name, description, boundary, is_public } = parsed.data;
+    console.log('[createPolygonAction] inserting for user', user.id, {
+      name,
+      boundaryPoints: boundary.coordinates[0].length,
+      is_public,
+    });
+
     const { data, error } = await supabase
       .from('polygons')
       .insert({
@@ -93,18 +107,22 @@ export async function createPolygonAction(
       return { error: translateDbError(error) };
     }
     if (!data || !(data as { id?: string }).id) {
-      // RLS SELECT после INSERT не вернул строку — например, права на
-      // чтение созданной строки не совпали с правами на вставку.
       return {
         error:
           'Участок создан, но нет прав его прочитать. Обратитесь к администратору.',
       };
     }
-    newId = (data as { id: string }).id;
+
+    const newId = (data as { id: string }).id;
+    console.log('[createPolygonAction] created id=', newId);
+    revalidatePath('/polygons');
+    revalidatePath('/map');
+    // Не используем redirect() — на связке React 19 + Next 16 бывают
+    // случаи, когда исключение NEXT_REDIRECT из server action не
+    // приводит к клиентской навигации. Возвращаем redirectTo и клиент
+    // сам сделает router.push().
+    return { redirectTo: `/map?polygon=${newId}` };
   } catch (err) {
-    // redirect() бросает NEXT_REDIRECT — его надо пробрасывать дальше,
-    // иначе перенаправление не сработает. Всё остальное — реальная
-    // ошибка, показываем пользователю.
     if (isRedirectError(err)) throw err;
     console.error('[createPolygonAction] unexpected error:', err);
     return {
@@ -113,10 +131,6 @@ export async function createPolygonAction(
         (err instanceof Error ? err.message : 'неизвестная ошибка'),
     };
   }
-
-  revalidatePath('/polygons');
-  revalidatePath('/map');
-  redirect(`/map?polygon=${newId}`);
 }
 
 export async function updatePolygonAction(
@@ -149,6 +163,11 @@ export async function updatePolygonAction(
       console.error('[updatePolygonAction] supabase update error:', error);
       return { error: translateDbError(error) };
     }
+
+    revalidatePath('/polygons');
+    revalidatePath(`/polygons/${id}`);
+    revalidatePath('/map');
+    return { redirectTo: `/polygons/${id}` };
   } catch (err) {
     if (isRedirectError(err)) throw err;
     console.error('[updatePolygonAction] unexpected error:', err);
@@ -158,11 +177,6 @@ export async function updatePolygonAction(
         (err instanceof Error ? err.message : 'неизвестная ошибка'),
     };
   }
-
-  revalidatePath('/polygons');
-  revalidatePath(`/polygons/${id}`);
-  revalidatePath('/map');
-  redirect(`/polygons/${id}`);
 }
 
 // Переключение публичности отдельным action — чтобы делать с одной кнопки

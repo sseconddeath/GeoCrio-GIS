@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useActionState, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
@@ -38,6 +39,15 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
     ? updatePolygonAction.bind(null, polygon!.id)
     : createPolygonAction;
   const [state, formAction] = useActionState(action, initialState);
+
+  // Server-action возвращает redirectTo вместо прямого redirect() —
+  // тут делаем клиентскую навигацию, когда action ответил успехом.
+  const router = useRouter();
+  useEffect(() => {
+    if (state.redirectTo) {
+      router.push(state.redirectTo);
+    }
+  }, [state.redirectTo, router]);
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
