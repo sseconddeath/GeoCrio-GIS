@@ -27,6 +27,12 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
   const [boundary, setBoundary] = useState<GeoJSON.Polygon | null>(
     (polygon?.boundary as GeoJSON.Polygon | null) ?? null,
   );
+  // Контролируемые поля: React 19 сбрасывает <form action> после submit
+  // и uncontrolled Input.value обнуляется — из-за этого при ошибке
+  // сервера пользователь терял введённые название/описание.
+  const [name, setName] = useState<string>(polygon?.name ?? '');
+  const [description, setDescription] = useState<string>(polygon?.description ?? '');
+  const [isPublic, setIsPublic] = useState<boolean>(polygon?.is_public ?? false);
 
   const action = isEdit
     ? updatePolygonAction.bind(null, polygon!.id)
@@ -42,7 +48,8 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
         name="name"
         type="text"
         required
-        defaultValue={polygon?.name}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
         placeholder="напр. Полевые работы 2026, Собь"
         error={state.fieldErrors?.name}
       />
@@ -55,7 +62,8 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
           id="p_description"
           name="description"
           rows={3}
-          defaultValue={polygon?.description ?? ''}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
           className="min-h-[80px] rounded-md border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-header/50"
           placeholder="Кратко: район, цель работ, срок"
         />
@@ -92,7 +100,8 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
         <input
           type="checkbox"
           name="is_public"
-          defaultChecked={polygon?.is_public ?? false}
+          checked={isPublic}
+          onChange={(e) => setIsPublic(e.target.checked)}
           className="mt-1 h-4 w-4"
         />
         <div>

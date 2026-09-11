@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import type { ZodError } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { translateDbError } from '@/lib/supabase/db-errors';
@@ -66,30 +67,56 @@ export async function createPolygonAction(
   const parsed = polygonSchema.safeParse(readFormData(fd));
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: 'Требуется вход в систему' };
+  let newId: string;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: 'Требуется вход в систему' };
 
-  const { name, description, boundary, is_public } = parsed.data;
-  const { data, error } = await supabase
-    .from('polygons')
-    .insert({
-      name,
-      description,
-      boundary: polygonToEWKT(boundary),
-      is_public,
-      created_by: user.id,
-    })
-    .select('id')
-    .single();
+    const { name, description, boundary, is_public } = parsed.data;
+    const { data, error } = await supabase
+      .from('polygons')
+      .insert({
+        name,
+        description,
+        boundary: polygonToEWKT(boundary),
+        is_public,
+        created_by: user.id,
+      })
+      .select('id')
+      .single();
 
-  if (error) return { error: translateDbError(error) };
+    if (error) {
+      console.error('[createPolygonAction] supabase insert error:', error);
+      return { error: translateDbError(error) };
+    }
+    if (!data || !(data as { id?: string }).id) {
+      // RLS SELECT после INSERT не вернул строку — например, права на
+      // чтение созданной строки не совпали с правами на вставку.
+      return {
+        error:
+          'Участок создан, но нет прав его прочитать. Обратитесь к администратору.',
+      };
+    }
+    newId = (data as { id: string }).id;
+  } catch (err) {
+    // redirect() бросает NEXT_REDIRECT — его надо пробрасывать дальше,
+    // иначе перенаправление не сработает. Всё остальное — реальная
+    // ошибка, показываем пользователю.
+    if (isRedirectError(err)) throw err;
+    console.error('[createPolygonAction] unexpected error:', err);
+    return {
+      error:
+        'Не удалось создать участок: ' +
+        (err instanceof Error ? err.message : 'неизвестная ошибка'),
+    };
+  }
 
   revalidatePath('/polygons');
   revalidatePath('/map');
-  redirect(`/map?polygon=${(data as { id: string }).id}`);
+  redirect(`/map?polygon=${newId}`);
 }
 
 export async function updatePolygonAction(
@@ -100,24 +127,37 @@ export async function updatePolygonAction(
   const parsed = polygonSchema.safeParse(readFormData(fd));
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: 'Требуется вход в систему' };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: 'Требуется вход в систему' };
 
-  const { name, description, boundary, is_public } = parsed.data;
-  const { error } = await supabase
-    .from('polygons')
-    .update({
-      name,
-      description,
-      boundary: polygonToEWKT(boundary),
-      is_public,
-    })
-    .eq('id', id);
+    const { name, description, boundary, is_public } = parsed.data;
+    const { error } = await supabase
+      .from('polygons')
+      .update({
+        name,
+        description,
+        boundary: polygonToEWKT(boundary),
+        is_public,
+      })
+      .eq('id', id);
 
-  if (error) return { error: translateDbError(error) };
+    if (error) {
+      console.error('[updatePolygonAction] supabase update error:', error);
+      return { error: translateDbError(error) };
+    }
+  } catch (err) {
+    if (isRedirectError(err)) throw err;
+    console.error('[updatePolygonAction] unexpected error:', err);
+    return {
+      error:
+        'Не удалось сохранить участок: ' +
+        (err instanceof Error ? err.message : 'неизвестная ошибка'),
+    };
+  }
 
   revalidatePath('/polygons');
   revalidatePath(`/polygons/${id}`);
