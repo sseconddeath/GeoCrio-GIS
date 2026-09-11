@@ -20,9 +20,12 @@ import type {
 // Полигон по id: доступ фильтруется RLS (свой / соавтор / публичный / админ).
 export const getPolygon = cache(async (id: string): Promise<PolygonRow | null> => {
   const supabase = await createClient();
+  // boundary_geojson — сгенерированное jsonb-поле (см. миграцию 012).
+  // select('*') его тоже возьмёт, но перечислим явно на случай, если
+  // кто-то будет отлаживать: должно приходить GeoJSON.Polygon.
   const { data } = await supabase
     .from('polygons')
-    .select('*')
+    .select('*, boundary_geojson')
     .eq('id', id)
     .maybeSingle();
   return data as PolygonRow | null;

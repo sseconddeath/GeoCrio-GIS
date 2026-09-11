@@ -56,7 +56,12 @@ export type PolygonRow = {
   id: string;
   name: string;
   description: string | null;
-  boundary: PolygonGeom;
+  // PostGIS geometry возвращается PostgREST'ом как EWKB hex-строка,
+  // поэтому клиенту приходит string. Читать надо boundary_geojson.
+  boundary: string;
+  // Сгенерированное поле (миграция 012): ST_AsGeoJSON(boundary)::jsonb.
+  // Наполняется автоматически при insert/update boundary.
+  boundary_geojson: PolygonGeom;
   center_lat: number;
   center_lng: number;
   default_zoom: number;
@@ -311,11 +316,13 @@ export interface Database {
       >;
       polygons: TableDef<
         PolygonRow,
+        // boundary_geojson — GENERATED-колонка, при insert/update передавать
+        // её нельзя (PostgreSQL сам заполнит из boundary).
         WithGeometryWrite<Optional<
           PolygonRow,
-          'id' | 'description' | 'center_lat' | 'center_lng' | 'default_zoom' | 'is_public' | 'created_by' | 'created_at' | 'updated_at'
+          'id' | 'description' | 'center_lat' | 'center_lng' | 'default_zoom' | 'is_public' | 'created_by' | 'created_at' | 'updated_at' | 'boundary_geojson'
         >>,
-        WithGeometryWrite<Partial<Omit<PolygonRow, 'id' | 'center_lat' | 'center_lng'>>>
+        WithGeometryWrite<Partial<Omit<PolygonRow, 'id' | 'center_lat' | 'center_lng' | 'boundary_geojson'>>>
       >;
       polygon_members: TableDef<
         PolygonMemberRow,

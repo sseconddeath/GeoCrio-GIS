@@ -26,7 +26,7 @@ const initialState: PolygonActionState = {};
 export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
   const isEdit = Boolean(polygon);
   const [boundary, setBoundary] = useState<GeoJSON.Polygon | null>(
-    (polygon?.boundary as GeoJSON.Polygon | null) ?? null,
+    polygon?.boundary_geojson ?? null,
   );
   // Контролируемые поля: React 19 сбрасывает <form action> после submit
   // и uncontrolled Input.value обнуляется — из-за этого при ошибке
@@ -106,25 +106,30 @@ export function PolygonForm({ polygon, onCancel }: PolygonFormProps) {
         />
       </div>
 
-      <label className="flex items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
-        <input
-          type="checkbox"
-          name="is_public"
-          checked={isPublic}
-          onChange={(e) => setIsPublic(e.target.checked)}
-          className="mt-1 h-4 w-4"
-        />
-        <div>
-          <div className="text-sm font-medium text-gray-700">
-            Опубликовать для всех геологов
+      <div className="flex flex-col gap-1">
+        <label className="flex items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <input
+            type="checkbox"
+            name="is_public"
+            checked={isPublic}
+            onChange={(e) => setIsPublic(e.target.checked)}
+            className="mt-1 h-4 w-4"
+          />
+          <div>
+            <div className="text-sm font-medium text-gray-700">
+              Опубликовать для всех геологов
+            </div>
+            <div className="text-xs text-gray-500">
+              Другие пользователи смогут открыть участок и посмотреть данные,
+              но менять их — только вы и приглашённые вами соавторы. Публичность
+              можно выключить в любой момент.
+            </div>
           </div>
-          <div className="text-xs text-gray-500">
-            Другие пользователи смогут открыть участок и посмотреть данные,
-            но менять их — только вы и приглашённые вами соавторы. Публичность
-            можно выключить в любой момент.
-          </div>
-        </div>
-      </label>
+        </label>
+        {state.fieldErrors?.is_public ? (
+          <p className="text-sm text-red-600">{state.fieldErrors.is_public}</p>
+        ) : null}
+      </div>
 
       <div className="flex gap-2 pt-2">
         <Button type="submit" className="flex-1" disabled={!boundary}>

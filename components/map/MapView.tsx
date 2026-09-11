@@ -125,7 +125,7 @@ export function MapView({
       // Штриховая граница полигона (раздел 7.1 ТЗ).
       map.addSource('polygon-boundary', {
         type: 'geojson',
-        data: { type: 'Feature', geometry: polygon.boundary, properties: {} },
+        data: { type: 'Feature', geometry: polygon.boundary_geojson, properties: {} },
       });
       map.addLayer({
         id: 'polygon-boundary-fill',
@@ -145,7 +145,7 @@ export function MapView({
       });
 
       // Bounding box полигона + небольшой padding.
-      const coords = polygon.boundary.coordinates[0] as [number, number][];
+      const coords = polygon.boundary_geojson.coordinates[0] as [number, number][];
       const [sw, ne] = polygonBounds(coords);
       map.fitBounds([sw, ne], { padding: 40, animate: false, maxZoom: polygon.default_zoom + 2 });
 

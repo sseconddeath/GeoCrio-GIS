@@ -137,8 +137,18 @@ const polygonBoundary = z
     'Полигон должен содержать не менее 3 разных вершин (первая = последней)',
   );
 
+// unchecked <input type="checkbox"> НЕ отправляется в form-data,
+// поэтому fd.get('is_public') возвращает null (не undefined) — из-за
+// этого без null в union валидация молча падала и action не выполнялся.
 const isPublic = z
-  .union([z.boolean(), z.literal('on'), z.literal('true'), z.literal('false'), z.undefined()])
+  .union([
+    z.boolean(),
+    z.literal('on'),
+    z.literal('true'),
+    z.literal('false'),
+    z.null(),
+    z.undefined(),
+  ])
   .transform((v) => v === true || v === 'on' || v === 'true');
 
 export const polygonSchema = z.object({
